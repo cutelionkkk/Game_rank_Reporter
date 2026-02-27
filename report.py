@@ -1,7 +1,11 @@
-"""Report generator for Discord output"""
+"""Report generator — focused on analysis, not listing"""
 
+import json
 from datetime import datetime
+from collections import defaultdict, Counter
+
 from analyzer import generate_full_analysis
+from database import get_rankings_at, get_latest_crawl_time, get_all_crawl_times, get_db
 from config import REPORT_MAX_ITEMS
 
 
@@ -10,17 +14,289 @@ CHART_NAMES = {'free': '免费榜', 'paid': '付费榜', 'grossing': '畅销榜'
 CHART_EMOJI = {'free': '🆓', 'paid': '💵', 'grossing': '💰'}
 
 
-def format_rank_change(change):
-    """Format rank change with arrow"""
+def fmt_change(change):
     if change > 0:
         return f"⬆️+{change}"
     elif change < 0:
         return f"⬇️{change}"
-    return "➡️"
+    return "→"
+
+
+def _get_category_distribution(crawl_time, platform, chart_type):
+    """Get category counts for a specific crawl"""
+    apps = get_rankings_at(crawl_time, platform, chart_type)
+    counter = Counter()
+    for a in apps:
+        cat = a.get('category') or ''
+        if cat:
+            counter[cat] += 1
+    return counter, len(apps)
+
+
+def _generate_first_crawl_report(analysis):
+    """首次抓取：做快照分析而不是列名单"""
+    lines = []
+    lines.append("📸 **首次抓取快照**")
+    lines.append("*尚无历史对比数据，以下为当前市场格局概览。下次抓取后将生成完整变动分析。*")
+    lines.append("")
+
+    ct = analysis['crawl_time']
+
+    for platform in ['ios', 'gp']:
+        pname = PLATFORM_NAMES[platform]
+        lines.append(f"**{pname}**")
+
+        for chart_type in ['free', 'paid', 'grossing']:
+            key = f"{platform}_{chart_type}"
+            emoji = CHART_EMOJI[chart_type]
+            cname = CHART_NAMES[chart_type]
+
+            apps = get_rankings_at(ct, platform, chart_type)
+            if not apps:
+                continue
+
+            # 品类分布
+            cat_counter = Counter()
+            devs = Counter()
+            for a in apps:
+                cat = a.get('category') or ''
+                dev = a.get('developer') or ''
+                if cat:
+                    cat_counter[cat] += 1
+                if dev:
+                    devs[dev] += 1
+
+            lines.append(f"{emoji} {cname} ({len(apps)}款)")
+
+            # Top 3 名称
+            top3 = [a['app_name'] for a in apps[:3]]
+            lines.append(f"  🏆 Top 3: {' / '.join(top3)}")
+
+            # 品类分布 Top 5
+            if cat_counter:
+                top_cats = cat_counter.most_common(5)
+                cat_str = " | ".join(f"{c}: {n}款" for c, n in top_cats)
+                lines.append(f"  📂 品类: {cat_str}")
+
+            # 头部开发商
+            multi_devs = [(d, n) for d, n in devs.most_common(5) if n >= 2]
+            if multi_devs:
+                dev_str = ", ".join(f"{d}({n}款)" for d, n in multi_devs)
+                lines.append(f"  🏢 多款在榜: {dev_str}")
+
+        lines.append("")
+
+    return "\n".join(lines)
+
+
+def _generate_change_report(analysis):
+    """有对比数据时：专注分析变动趋势"""
+    lines = []
+
+    # ========== 全局概览 ==========
+    total_surges = 0
+    total_drops = 0
+    total_new = 0
+    total_exits = 0
+    all_surges = []
+    all_drops = []
+    all_new_entries = []
+
+    for platform in ['ios', 'gp']:
+        for chart_type in ['free', 'paid', 'grossing']:
+            key = f"{platform}_{chart_type}"
+            changes = analysis['charts'].get(key, {}).get('changes', {})
+            surges = changes.get('surges', [])
+            drops = changes.get('drops', [])
+            new_entries = changes.get('new_entries', [])
+            exits = changes.get('exits', [])
+
+            total_surges += len(surges)
+            total_drops += len(drops)
+            total_new += len(new_entries)
+            total_exits += len(exits)
+
+            for s in surges:
+                all_surges.append({**s, '_platform': platform, '_chart': chart_type})
+            for d in drops:
+                all_drops.append({**d, '_platform': platform, '_chart': chart_type})
+            for n in new_entries:
+                all_new_entries.append({**n, '_platform': platform, '_chart': chart_type})
+
+    # 概览
+    lines.append(f"📈 飙升 {total_surges} | 📉 暴跌 {total_drops} | 🆕 新上榜 {total_new} | 🚪 跌出 {total_exits}")
+    lines.append("")
+
+    # ========== 1. 排名飙升最快 (跨榜单) ==========
+    all_surges.sort(key=lambda x: x['rank_change'], reverse=True)
+    if all_surges:
+        lines.append("**🔥 飙升最快**")
+        for s in all_surges[:8]:
+            pname = "iOS" if s['_platform'] == 'ios' else "GP"
+            cname = CHART_NAMES[s['_chart']]
+            cat = s.get('category') or ''
+            cat_tag = f" [{cat}]" if cat else ""
+            lines.append(
+                f"  {fmt_change(s['rank_change'])} **{s['app_name']}**{cat_tag} "
+                f"#{s['prev_rank']}→#{s['rank']} ({pname} {cname})"
+            )
+        lines.append("")
+
+    # ========== 2. 排名暴跌 (跨榜单) ==========
+    all_drops.sort(key=lambda x: x['rank_change'])
+    if all_drops:
+        lines.append("**📉 下跌最快**")
+        for d in all_drops[:6]:
+            pname = "iOS" if d['_platform'] == 'ios' else "GP"
+            cname = CHART_NAMES[d['_chart']]
+            cat = d.get('category') or ''
+            cat_tag = f" [{cat}]" if cat else ""
+            lines.append(
+                f"  {fmt_change(d['rank_change'])} **{d['app_name']}**{cat_tag} "
+                f"#{d['prev_rank']}→#{d['rank']} ({pname} {cname})"
+            )
+        lines.append("")
+
+    # ========== 3. 新上榜亮点 ==========
+    # 按排名排序，越靠前越重要
+    all_new_entries.sort(key=lambda x: x['rank'])
+    if all_new_entries:
+        lines.append("**🆕 新上榜亮点**")
+        shown = 0
+        for n in all_new_entries:
+            if shown >= 6:
+                break
+            pname = "iOS" if n['_platform'] == 'ios' else "GP"
+            cname = CHART_NAMES[n['_chart']]
+            cat = n.get('category') or ''
+            cat_tag = f" [{cat}]" if cat else ""
+            new_tag = " 🌟新游戏" if n.get('is_new_game') else ""
+            lines.append(
+                f"  #{n['rank']} **{n['app_name']}**{cat_tag}{new_tag} ({pname} {cname})"
+            )
+            shown += 1
+        remaining = len(all_new_entries) - shown
+        if remaining > 0:
+            lines.append(f"  ...及其他 {remaining} 款")
+        lines.append("")
+
+    # ========== 4. 品类变化分析 ==========
+    # 只分析有 category 数据的榜单（目前主要是 iOS grossing + GP 全部）
+    cat_analysis_lines = []
+    for platform in ['ios', 'gp']:
+        for chart_type in ['grossing', 'free']:
+            key = f"{platform}_{chart_type}"
+            trends = analysis.get('category_trends', {}).get(key, [])
+            rising = [t for t in trends if t['change'] > 0]
+            falling = [t for t in trends if t['change'] < 0]
+
+            if rising or falling:
+                pname = "iOS" if platform == 'ios' else "GP"
+                cname = CHART_NAMES[chart_type]
+
+                for t in rising[:3]:
+                    cat_analysis_lines.append(
+                        f"  📈 **{t['category']}** +{t['change']}款 "
+                        f"({t['previous_count']}→{t['current_count']}) — {pname} {cname}"
+                    )
+                for t in falling[:2]:
+                    cat_analysis_lines.append(
+                        f"  📉 **{t['category']}** {t['change']}款 "
+                        f"({t['previous_count']}→{t['current_count']}) — {pname} {cname}"
+                    )
+
+    if cat_analysis_lines:
+        lines.append("**📊 品类趋势变化**")
+        lines.extend(cat_analysis_lines[:8])
+        lines.append("")
+
+    # ========== 5. 各榜单品类分布 ==========
+    ct = analysis['crawl_time']
+    dist_lines = []
+    for platform in ['ios', 'gp']:
+        for chart_type in ['grossing', 'free']:
+            cat_counter, total = _get_category_distribution(ct, platform, chart_type)
+            if not cat_counter or total < 10:
+                continue
+            pname = "iOS" if platform == 'ios' else "GP"
+            cname = CHART_NAMES[chart_type]
+            top5 = cat_counter.most_common(5)
+            parts = []
+            for cat, count in top5:
+                pct = round(count / total * 100)
+                parts.append(f"{cat} {count}款({pct}%)")
+            dist_lines.append(f"  {pname} {cname}: {' | '.join(parts)}")
+
+    if dist_lines:
+        lines.append("**📂 Top 100 品类分布**")
+        lines.extend(dist_lines)
+        lines.append("")
+
+    # ========== 6. 持续上升 ==========
+    riser_lines = []
+    for platform in ['ios', 'gp']:
+        for chart_type in ['free', 'grossing']:
+            key = f"{platform}_{chart_type}"
+            risers = analysis.get('consecutive_risers', {}).get(key, [])
+            pname = "iOS" if platform == 'ios' else "GP"
+            cname = CHART_NAMES[chart_type]
+            for r in risers[:3]:
+                riser_lines.append(
+                    f"  **{r['app_name']}** #{r['first_rank']}→#{r['current_rank']} "
+                    f"连续{r['consecutive_rises']}次↑ ({pname} {cname})"
+                )
+
+    if riser_lines:
+        lines.append("**🚀 持续上升（连续多次排名提升）**")
+        lines.extend(riser_lines[:6])
+        lines.append("")
+
+    # ========== 7. 头部开发商动态 ==========
+    dev_lines = _analyze_developers(ct)
+    if dev_lines:
+        lines.append("**🏢 开发商动态**")
+        lines.extend(dev_lines)
+        lines.append("")
+
+    # 如果什么变动都没有
+    if total_surges == 0 and total_drops == 0 and total_new == 0:
+        lines.append("💤 本轮榜单相对稳定，无显著排名变动。")
+        lines.append("")
+
+    return "\n".join(lines)
+
+
+def _analyze_developers(crawl_time):
+    """分析开发商：谁有多款产品在头部"""
+    dev_apps = defaultdict(list)
+
+    for platform in ['ios', 'gp']:
+        for chart_type in ['grossing']:  # 主要看畅销榜
+            apps = get_rankings_at(crawl_time, platform, chart_type)
+            pname = "iOS" if platform == 'ios' else "GP"
+            for a in apps[:50]:  # Top 50
+                dev = a.get('developer') or ''
+                if dev:
+                    dev_apps[dev].append({
+                        'name': a['app_name'],
+                        'rank': a['rank'],
+                        'platform': pname,
+                    })
+
+    lines = []
+    # 按产品数量排序
+    multi = [(dev, apps) for dev, apps in dev_apps.items() if len(apps) >= 2]
+    multi.sort(key=lambda x: len(x[1]), reverse=True)
+
+    for dev, apps in multi[:5]:
+        app_strs = [f"{a['name']}(#{a['rank']} {a['platform']})" for a in apps[:4]]
+        lines.append(f"  **{dev}** — {len(apps)}款: {', '.join(app_strs)}")
+
+    return lines
 
 
 def generate_report(crawl_time=None):
-    """Generate a Discord-friendly report"""
+    """Generate analysis-focused report"""
     analysis = generate_full_analysis(crawl_time)
     if not analysis:
         return "❌ 没有数据可分析。请先运行爬虫。"
@@ -32,152 +308,86 @@ def generate_report(crawl_time=None):
     except:
         time_str = ct
 
-    lines = []
-    lines.append(f"📊 **游戏榜单分析报告** — {time_str}")
-    lines.append(f"🇺🇸 美国区 | Top 100")
-    lines.append("")
+    header = []
+    header.append(f"📊 **游戏榜单分析报告** — {time_str}")
+    header.append(f"🇺🇸 美国区 | Top 100 | iOS + Google Play")
+    header.append("")
 
-    has_content = False
-
-    for platform in ['ios', 'gp']:
-        platform_name = PLATFORM_NAMES[platform]
-        platform_sections = []
-
-        for chart_type in ['free', 'paid', 'grossing']:
-            key = f"{platform}_{chart_type}"
-            data = analysis['charts'].get(key, {})
+    # 判断是否有历史对比数据
+    has_comparison = False
+    for key, data in analysis['charts'].items():
+        if data.get('previous_time'):
             changes = data.get('changes', {})
-            prev_time = data.get('previous_time')
+            # 有对比数据 = 有非 new_entry 的变化 或 new_entry 不是全部
+            surges = changes.get('surges', [])
+            drops = changes.get('drops', [])
+            up = changes.get('top_movers_up', [])
+            down = changes.get('top_movers_down', [])
+            if surges or drops or up or down:
+                has_comparison = True
+                break
 
-            emoji = CHART_EMOJI[chart_type]
-            chart_name = CHART_NAMES[chart_type]
+    if has_comparison:
+        body = _generate_change_report(analysis)
+    else:
+        body = _generate_first_crawl_report(analysis)
 
-            section_lines = []
+    report = "\n".join(header) + body
 
-            # --- 飙升 ---
-            surges = changes.get('surges', [])[:REPORT_MAX_ITEMS]
-            if surges:
-                section_lines.append(f"**🔥 飙升最快**")
-                for i, app in enumerate(surges, 1):
-                    section_lines.append(
-                        f"  {i}. {format_rank_change(app['rank_change'])} "
-                        f"**{app['app_name']}** — {app.get('category', '?')} — "
-                        f"#{app['prev_rank']}→#{app['rank']}"
-                    )
-
-            # --- 新上榜 ---
-            new_entries = changes.get('new_entries', [])[:REPORT_MAX_ITEMS]
-            if new_entries:
-                section_lines.append(f"**🆕 新上榜**")
-                for i, app in enumerate(new_entries, 1):
-                    new_tag = " 🌟新游戏" if app.get('is_new_game') else ""
-                    section_lines.append(
-                        f"  {i}. #{app['rank']} **{app['app_name']}** — "
-                        f"{app.get('category', '?')}{new_tag}"
-                    )
-
-            # --- 暴跌 ---
-            drops = changes.get('drops', [])[:5]
-            if drops:
-                section_lines.append(f"**📉 大幅下跌**")
-                for i, app in enumerate(drops, 1):
-                    section_lines.append(
-                        f"  {i}. {format_rank_change(app['rank_change'])} "
-                        f"**{app['app_name']}** — #{app['prev_rank']}→#{app['rank']}"
-                    )
-
-            # --- 跌出榜单 ---
-            exits = changes.get('exits', [])[:5]
-            if exits:
-                section_lines.append(f"**🚪 跌出 Top 100**")
-                for app in exits:
-                    section_lines.append(f"  - {app['app_name']} (原#{app['rank']})")
-
-            if section_lines:
-                platform_sections.append((chart_type, section_lines))
-
-        # --- 品类趋势 ---
-        cat_lines = []
-        for chart_type in ['free', 'grossing']:
-            key = f"{platform}_{chart_type}"
-            trends = analysis.get('category_trends', {}).get(key, [])
-            rising = [t for t in trends if t['change'] > 0][:5]
-            if rising:
-                chart_name = CHART_NAMES[chart_type]
-                for t in rising:
-                    cat_lines.append(
-                        f"  - **{t['category']}** {chart_name}: "
-                        f"{t['previous_count']}→{t['current_count']}款 (+{t['change']})"
-                    )
-
-        # --- 持续上升 ---
-        riser_lines = []
-        for chart_type in ['free', 'grossing']:
-            key = f"{platform}_{chart_type}"
-            risers = analysis.get('consecutive_risers', {}).get(key, [])[:5]
-            if risers:
-                chart_name = CHART_NAMES[chart_type]
-                for r in risers:
-                    riser_lines.append(
-                        f"  - **{r['app_name']}** ({chart_name}) — "
-                        f"#{r['first_rank']}→#{r['current_rank']} "
-                        f"(连续{r['consecutive_rises']}次上升)"
-                    )
-
-        # Output platform section
-        if platform_sections or cat_lines or riser_lines:
-            has_content = True
-            lines.append(f"{'─' * 30}")
-            lines.append(f"**{platform_name}**")
-            lines.append("")
-
-            for chart_type, section_lines in platform_sections:
-                emoji = CHART_EMOJI[chart_type]
-                chart_name = CHART_NAMES[chart_type]
-                lines.append(f"{emoji} **{chart_name}**")
-                lines.extend(section_lines)
-                lines.append("")
-
-            if cat_lines:
-                lines.append("**📈 品类趋势（7日）**")
-                lines.extend(cat_lines)
-                lines.append("")
-
-            if riser_lines:
-                lines.append("**🚀 持续上升**")
-                lines.extend(riser_lines)
-                lines.append("")
-
-    if not has_content:
-        # First crawl, no comparison data
-        lines.append("ℹ️ 首次抓取，暂无对比数据。下次抓取后会生成完整的变动分析。")
-        lines.append("")
-
-        # Show current top 5 for each chart
-        for platform in ['ios', 'gp']:
-            platform_name = PLATFORM_NAMES[platform]
-            lines.append(f"**{platform_name} — 当前 Top 5**")
-            for chart_type in ['free', 'paid', 'grossing']:
-                key = f"{platform}_{chart_type}"
-                data = analysis['charts'].get(key, {})
-                changes = data.get('changes', {})
-                # For first crawl, all are "new entries"
-                all_apps = changes.get('new_entries', [])[:5]
-                if all_apps:
-                    emoji = CHART_EMOJI[chart_type]
-                    chart_name = CHART_NAMES[chart_type]
-                    lines.append(f"  {emoji} {chart_name}:")
-                    for app in all_apps:
-                        lines.append(f"    {app['rank']}. {app['app_name']} — {app.get('category', '?')}")
-            lines.append("")
-
-    report = "\n".join(lines)
-
-    # Discord message limit is 2000 chars
-    if len(report) > 1900:
-        report = report[:1900] + "\n\n... (报告被截断，完整报告请查看日志)"
+    # Discord 2000 字符限制 → 分段发送时用 generate_report_parts
+    if len(report) > 1950:
+        report = report[:1950] + "\n\n_(报告较长，完整版见 latest_report.txt)_"
 
     return report
+
+
+def generate_report_parts(crawl_time=None, max_len=1900):
+    """Generate report split into multiple parts for Discord"""
+    analysis = generate_full_analysis(crawl_time)
+    if not analysis:
+        return ["❌ 没有数据可分析。请先运行爬虫。"]
+
+    ct = analysis['crawl_time']
+    try:
+        dt = datetime.fromisoformat(ct.replace('Z', '+00:00'))
+        time_str = dt.strftime("%Y-%m-%d %H:%M UTC")
+    except:
+        time_str = ct
+
+    header = f"📊 **游戏榜单分析报告** — {time_str}\n🇺🇸 美国区 | Top 100 | iOS + Google Play\n\n"
+
+    has_comparison = False
+    for key, data in analysis['charts'].items():
+        if data.get('previous_time'):
+            changes = data.get('changes', {})
+            if changes.get('surges') or changes.get('drops') or \
+               changes.get('top_movers_up') or changes.get('top_movers_down'):
+                has_comparison = True
+                break
+
+    if has_comparison:
+        body = _generate_change_report(analysis)
+    else:
+        body = _generate_first_crawl_report(analysis)
+
+    full = header + body
+
+    # Split into parts
+    if len(full) <= max_len:
+        return [full]
+
+    parts = []
+    current = ""
+    for line in full.split("\n"):
+        if len(current) + len(line) + 1 > max_len:
+            parts.append(current.rstrip())
+            current = line + "\n"
+        else:
+            current += line + "\n"
+    if current.strip():
+        parts.append(current.rstrip())
+
+    return parts
 
 
 def generate_summary_line(crawl_time=None):
@@ -188,12 +398,14 @@ def generate_summary_line(crawl_time=None):
 
     total_surges = 0
     total_new = 0
+    total_drops = 0
     for key, data in analysis['charts'].items():
         changes = data.get('changes', {})
         total_surges += len(changes.get('surges', []))
         total_new += len(changes.get('new_entries', []))
+        total_drops += len(changes.get('drops', []))
 
-    return f"📊 游戏榜单：{total_surges}款飙升，{total_new}款新上榜"
+    return f"📊 游戏榜单：{total_surges}飙升 {total_drops}暴跌 {total_new}新上榜"
 
 
 if __name__ == "__main__":
