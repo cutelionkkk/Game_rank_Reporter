@@ -9,8 +9,9 @@ from datetime import datetime, timezone
 
 import requests
 
-from config import COUNTRY, TOP_N
+from config import COUNTRY, TOP_N, load_settings
 from database import insert_rankings, log_crawl, init_db
+from genres import GENRES, get_genre, format_chart_label
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 GP_SCRAPER = os.path.join(SCRIPT_DIR, "gp_scraper.js")
@@ -22,14 +23,34 @@ NODE_PATH = subprocess.check_output(["npm", "root", "-g"], text=True,
 # Google Play Crawler (via Node.js google-play-scraper)
 # ============================================================
 
-def crawl_gp_chart(chart_type):
-    """Crawl a Google Play game chart using Node.js scraper"""
+def crawl_gp_chart(chart_type, genre_id="all", country=None, top_n=None):
+    """Crawl a Google Play game chart using Node.js scraper
+    
+    Args:
+        chart_type: free | paid | grossing
+        genre_id: genre key from genres.py (e.g. "casual", "puzzle", "all")
+        country: country code override
+        top_n: top N override
+    """
+    country = country or COUNTRY
+    top_n = top_n or TOP_N
+    
+    genre = get_genre(genre_id)
+    if not genre:
+        print(f"  ❌ Unknown genre: {genre_id}")
+        return []
+    
+    gp_category = genre.get("gp_category")
+    if not gp_category:
+        print(f"  ⚠️ Genre '{genre_id}' not available on Google Play")
+        return []
+
     env = os.environ.copy()
     env["NODE_PATH"] = NODE_PATH
 
     try:
         result = subprocess.run(
-            ["node", GP_SCRAPER, chart_type, COUNTRY, str(TOP_N)],
+            ["node", GP_SCRAPER, chart_type, country, str(top_n), gp_category],
             capture_output=True, text=True, timeout=120, env=env,
         )
 
@@ -74,20 +95,40 @@ def crawl_gp_chart(chart_type):
 # iOS App Store Crawler (RSS feeds)
 # ============================================================
 
-IOS_FEEDS_V2 = {
-    'free': f"https://rss.applemarketingtools.com/api/v2/{COUNTRY}/apps/top-free/{TOP_N}/apps.json",
-    'paid': f"https://rss.applemarketingtools.com/api/v2/{COUNTRY}/apps/top-paid/{TOP_N}/apps.json",
-}
-
-IOS_FEEDS_OLD = {
-    'free': f"https://itunes.apple.com/{COUNTRY}/rss/topfreeapplications/limit={TOP_N}/genre=6014/json",
-    'paid': f"https://itunes.apple.com/{COUNTRY}/rss/toppaidapplications/limit={TOP_N}/genre=6014/json",
-    'grossing': f"https://itunes.apple.com/{COUNTRY}/rss/topgrossingapplications/limit={TOP_N}/genre=6014/json",
-}
-
 IOS_HEADERS = {
     'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36'
 }
+
+# RSS feed URL builders
+def _ios_old_rss_url(chart_type, genre_id, country, top_n):
+    """Build old iTunes RSS URL with genre support"""
+    feed_map = {
+        'free': 'topfreeapplications',
+        'paid': 'toppaidapplications',
+        'grossing': 'topgrossingapplications',
+    }
+    feed_name = feed_map.get(chart_type)
+    if not feed_name:
+        return None
+    
+    genre = get_genre(genre_id)
+    if not genre:
+        return None
+    
+    ios_genre = genre.get("ios_genre_id")
+    if not ios_genre:
+        return None
+    
+    return f"https://itunes.apple.com/{country}/rss/{feed_name}/limit={top_n}/genre={ios_genre}/json"
+
+
+def _ios_v2_rss_url(chart_type, country, top_n):
+    """Build Apple RSS v2 URL (no genre filtering)"""
+    v2_map = {
+        'free': f"https://rss.applemarketingtools.com/api/v2/{country}/apps/top-free/{top_n}/apps.json",
+        'paid': f"https://rss.applemarketingtools.com/api/v2/{country}/apps/top-paid/{top_n}/apps.json",
+    }
+    return v2_map.get(chart_type)
 
 
 def _parse_ios_v2(data, top_n=100):
@@ -116,7 +157,7 @@ def _parse_ios_v2(data, top_n=100):
 
 
 def _parse_ios_old(data, top_n=100):
-    """Parse old iTunes RSS feed (genre=6014 = Games)"""
+    """Parse old iTunes RSS feed"""
     results = []
     for i, entry in enumerate(data.get('feed', {}).get('entry', [])[:top_n], 1):
         cat = entry.get('category', {})
@@ -149,30 +190,54 @@ def _parse_ios_old(data, top_n=100):
     return results
 
 
-def crawl_ios_chart(chart_type):
-    """Crawl an iOS App Store game chart"""
-    # Try v2 RSS first (free & paid)
-    v2_url = IOS_FEEDS_V2.get(chart_type)
-    if v2_url:
-        try:
-            resp = requests.get(v2_url, headers=IOS_HEADERS, timeout=30)
-            if resp.status_code == 200:
-                results = _parse_ios_v2(resp.json(), TOP_N)
-                if results:
-                    print(f"  📍 {len(results)} apps via RSS v2")
-                    return results
-        except Exception as e:
-            print(f"  ⚠️ iOS RSS v2 failed: {e}")
+def crawl_ios_chart(chart_type, genre_id="all", country=None, top_n=None):
+    """Crawl an iOS App Store game chart
+    
+    For genre_id="all" + free/paid: use RSS v2 (better data, but no genre filter)
+    For specific genres OR grossing: use old iTunes RSS (supports genre=XXXX)
+    """
+    country = country or COUNTRY
+    top_n = top_n or TOP_N
+    
+    genre = get_genre(genre_id)
+    if not genre:
+        print(f"  ❌ Unknown genre: {genre_id}")
+        return []
+    
+    if genre.get("ios_genre_id") is None:
+        print(f"  ⚠️ Genre '{genre_id}' not available on iOS")
+        return []
 
-    # Fallback: old iTunes RSS (Games genre=6014)
-    old_url = IOS_FEEDS_OLD.get(chart_type)
+    # Strategy:
+    # - "all" + free/paid → try v2 first (better data), fallback to old RSS
+    # - "all" + grossing → old RSS (v2 doesn't have grossing)
+    # - specific genre → always old RSS (v2 doesn't support genre filter)
+    
+    use_v2 = (genre_id == "all" and chart_type in ['free', 'paid'])
+    
+    if use_v2:
+        v2_url = _ios_v2_rss_url(chart_type, country, top_n)
+        if v2_url:
+            try:
+                resp = requests.get(v2_url, headers=IOS_HEADERS, timeout=30)
+                if resp.status_code == 200:
+                    results = _parse_ios_v2(resp.json(), top_n)
+                    if results:
+                        print(f"  📍 {len(results)} apps via RSS v2")
+                        return results
+            except Exception as e:
+                print(f"  ⚠️ iOS RSS v2 failed: {e}")
+
+    # Old iTunes RSS (with genre)
+    old_url = _ios_old_rss_url(chart_type, genre_id, country, top_n)
     if old_url:
         try:
             resp = requests.get(old_url, headers=IOS_HEADERS, timeout=30)
             resp.raise_for_status()
-            results = _parse_ios_old(resp.json(), TOP_N)
+            results = _parse_ios_old(resp.json(), top_n)
             if results:
-                print(f"  📍 {len(results)} apps via iTunes RSS")
+                source = f"iTunes RSS (genre={genre.get('ios_genre_id')})"
+                print(f"  📍 {len(results)} apps via {source}")
                 return results
         except Exception as e:
             print(f"  ⚠️ iOS old RSS failed: {e}")
@@ -184,62 +249,78 @@ def crawl_ios_chart(chart_type):
 # Main Crawl Orchestrator
 # ============================================================
 
+def _get_chart_list():
+    """Get the list of charts to crawl from settings"""
+    settings = load_settings()
+    chart_list = settings.get("chart_list")
+    
+    if chart_list:
+        # New format: explicit chart list with genres
+        return chart_list
+    
+    # Legacy format: platforms × charts (all genres)
+    platforms = settings.get("platforms", ["ios", "gp"])
+    charts = settings.get("charts", ["free", "paid", "grossing"])
+    result = []
+    for p in platforms:
+        for c in charts:
+            result.append({"platform": p, "chart_type": c, "genre": "all"})
+    return result
+
+
 def run_full_crawl():
-    """Run a full crawl of all charts"""
+    """Run a full crawl of all configured charts"""
     init_db()
     crawl_time = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    chart_list = _get_chart_list()
+    
     print(f"\n🕐 Crawl started at {crawl_time}")
+    print(f"📋 {len(chart_list)} charts to crawl")
     print("=" * 50)
 
     total = 0
     errors = []
 
-    # --- iOS (fast, RSS-based) ---
-    for chart_type in ['free', 'paid', 'grossing']:
-        print(f"\n🍎 iOS — {chart_type.upper()}")
+    for chart_conf in chart_list:
+        platform = chart_conf["platform"]
+        chart_type = chart_conf["chart_type"]
+        genre_id = chart_conf.get("genre", "all")
+        
+        label = format_chart_label(platform, chart_type, genre_id)
+        platform_emoji = "🍎" if platform == "ios" else "📱"
+        print(f"\n{platform_emoji} {label}")
+        
+        # Build a unique key for DB storage: platform + chart_type + genre
+        db_chart_type = chart_type if genre_id == "all" else f"{chart_type}:{genre_id}"
+        
         t0 = time.time()
         try:
-            items = crawl_ios_chart(chart_type)
+            if platform == "ios":
+                items = crawl_ios_chart(chart_type, genre_id)
+            elif platform == "gp":
+                items = crawl_gp_chart(chart_type, genre_id)
+            else:
+                print(f"  ❌ Unknown platform: {platform}")
+                continue
+            
             dt = time.time() - t0
             if items:
-                n = insert_rankings(crawl_time, 'ios', chart_type, items)
-                log_crawl(crawl_time, 'ios', chart_type, n, 'ok', duration=dt)
+                n = insert_rankings(crawl_time, platform, db_chart_type, items)
+                log_crawl(crawl_time, platform, db_chart_type, n, 'ok', duration=dt)
                 print(f"  ✅ {n} games ({dt:.1f}s)")
                 total += n
             else:
-                log_crawl(crawl_time, 'ios', chart_type, 0, 'error', 'No results', duration=dt)
-                errors.append(f"iOS {chart_type}: no results")
+                log_crawl(crawl_time, platform, db_chart_type, 0, 'error', 'No results', duration=dt)
+                errors.append(f"{label}: no results")
                 print(f"  ⚠️ No results")
         except Exception as e:
             dt = time.time() - t0
-            log_crawl(crawl_time, 'ios', chart_type, 0, 'error', str(e), duration=dt)
-            errors.append(f"iOS {chart_type}: {e}")
-            print(f"  ❌ {e}")
-
-    # --- Google Play (Node.js scraper) ---
-    for chart_type in ['free', 'paid', 'grossing']:
-        print(f"\n📱 GP — {chart_type.upper()}")
-        t0 = time.time()
-        try:
-            items = crawl_gp_chart(chart_type)
-            dt = time.time() - t0
-            if items:
-                n = insert_rankings(crawl_time, 'gp', chart_type, items)
-                log_crawl(crawl_time, 'gp', chart_type, n, 'ok', duration=dt)
-                print(f"  ✅ {n} games ({dt:.1f}s)")
-                total += n
-            else:
-                log_crawl(crawl_time, 'gp', chart_type, 0, 'error', 'No results', duration=dt)
-                errors.append(f"GP {chart_type}: no results")
-                print(f"  ⚠️ No results")
-        except Exception as e:
-            dt = time.time() - t0
-            log_crawl(crawl_time, 'gp', chart_type, 0, 'error', str(e), duration=dt)
-            errors.append(f"GP {chart_type}: {e}")
+            log_crawl(crawl_time, platform, db_chart_type, 0, 'error', str(e), duration=dt)
+            errors.append(f"{label}: {e}")
             print(f"  ❌ {e}")
 
     print(f"\n{'=' * 50}")
-    print(f"📊 Done: {total} total entries")
+    print(f"📊 Done: {total} total entries across {len(chart_list)} charts")
     if errors:
         print(f"⚠️ {len(errors)} errors:")
         for e in errors:

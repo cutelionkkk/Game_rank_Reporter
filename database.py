@@ -119,10 +119,15 @@ def get_rankings_at(crawl_time, platform, chart_type):
     return [dict(r) for r in rows]
 
 
-def get_previous_crawl_time(current_time, platform=None):
+def get_previous_crawl_time(current_time, platform=None, chart_type=None):
     """Get the crawl time before the given time"""
     conn = get_db()
-    if platform:
+    if platform and chart_type:
+        row = conn.execute("""
+            SELECT MAX(crawl_time) as t FROM rankings
+            WHERE crawl_time < ? AND platform=? AND chart_type=?
+        """, (current_time, platform, chart_type)).fetchone()
+    elif platform:
         row = conn.execute("""
             SELECT MAX(crawl_time) as t FROM rankings
             WHERE crawl_time < ? AND platform=?
@@ -134,6 +139,18 @@ def get_previous_crawl_time(current_time, platform=None):
         """, (current_time,)).fetchone()
     conn.close()
     return row['t'] if row else None
+
+
+def get_all_chart_types_at(crawl_time):
+    """Get all (platform, chart_type) pairs present at a given crawl_time"""
+    conn = get_db()
+    rows = conn.execute("""
+        SELECT DISTINCT platform, chart_type FROM rankings
+        WHERE crawl_time=?
+        ORDER BY platform, chart_type
+    """, (crawl_time,)).fetchall()
+    conn.close()
+    return [(r['platform'], r['chart_type']) for r in rows]
 
 
 def get_app_rank_history(app_id, platform, chart_type, days=7):

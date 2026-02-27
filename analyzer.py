@@ -6,13 +6,18 @@ from collections import defaultdict
 
 from database import (
     get_rankings_at, get_previous_crawl_time, get_latest_crawl_time,
-    get_app_rank_history, get_category_stats, get_all_crawl_times, get_db
+    get_app_rank_history, get_category_stats, get_all_crawl_times, get_db,
+    get_all_chart_types_at
 )
 from config import RANK_SURGE_THRESHOLD, NEW_ENTRY_DAYS, REPORT_MAX_ITEMS
 
 
 def analyze_chart_changes(platform, chart_type, current_time, previous_time):
-    """Compare two crawls and find changes"""
+    """Compare two crawls and find changes.
+    
+    chart_type can be "free", "paid", "grossing" (legacy)
+    or "free:casual", "grossing:strategy" (genre-specific)
+    """
     current = get_rankings_at(current_time, platform, chart_type)
     previous = get_rankings_at(previous_time, platform, chart_type) if previous_time else []
 
@@ -20,19 +25,18 @@ def analyze_chart_changes(platform, chart_type, current_time, previous_time):
     curr_map = {r['app_id']: r for r in current}
 
     changes = {
-        'new_entries': [],      # 新上榜
-        'surges': [],           # 排名飙升
-        'drops': [],            # 排名暴跌
-        'exits': [],            # 跌出榜单
-        'top_movers_up': [],    # 所有上升
-        'top_movers_down': [],  # 所有下降
-        'stable_top': [],       # 稳定在顶部
+        'new_entries': [],
+        'surges': [],
+        'drops': [],
+        'exits': [],
+        'top_movers_up': [],
+        'top_movers_down': [],
+        'stable_top': [],
     }
 
     for app in current:
         app_id = app['app_id']
         if app_id not in prev_map:
-            # New entry
             extra = {}
             try:
                 extra = json.loads(app.get('extra_json', '{}') or '{}')
@@ -46,15 +50,11 @@ def analyze_chart_changes(platform, chart_type, current_time, previous_time):
                     is_new_game = (datetime.now(timezone.utc) - rd).days <= NEW_ENTRY_DAYS
                 except:
                     pass
-
-            changes['new_entries'].append({
-                **app,
-                'is_new_game': is_new_game,
-            })
+            changes['new_entries'].append({**app, 'is_new_game': is_new_game})
         else:
             prev_rank = prev_map[app_id]['rank']
             curr_rank = app['rank']
-            diff = prev_rank - curr_rank  # positive = moved up
+            diff = prev_rank - curr_rank
 
             if diff >= RANK_SURGE_THRESHOLD:
                 changes['surges'].append({**app, 'prev_rank': prev_rank, 'rank_change': diff})
@@ -69,12 +69,10 @@ def analyze_chart_changes(platform, chart_type, current_time, previous_time):
                 if curr_rank <= 10:
                     changes['stable_top'].append(app)
 
-    # Exits (was in previous, not in current)
     for app_id, app in prev_map.items():
         if app_id not in curr_map:
             changes['exits'].append(app)
 
-    # Sort
     changes['surges'].sort(key=lambda x: x['rank_change'], reverse=True)
     changes['drops'].sort(key=lambda x: x['rank_change'])
     changes['top_movers_up'].sort(key=lambda x: x['rank_change'], reverse=True)
@@ -126,7 +124,6 @@ def find_consecutive_risers(platform, chart_type, days=7, min_rises=3):
     conn = get_db()
     since = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
 
-    # Get all apps that appear in recent crawls
     rows = conn.execute("""
         SELECT app_id, app_name, category,
                GROUP_CONCAT(rank || ':' || crawl_time, '|') as history
@@ -146,14 +143,13 @@ def find_consecutive_risers(platform, chart_type, days=7, min_rises=3):
             parts = h.split(':', 1)
             if len(parts) == 2:
                 points.append((parts[1], int(parts[0])))
-        points.sort(key=lambda x: x[0])  # Sort by time
+        points.sort(key=lambda x: x[0])
 
-        # Check if consistently rising (rank decreasing)
         if len(points) >= min_rises:
             consecutive = 0
             max_consecutive = 0
             for i in range(1, len(points)):
-                if points[i][1] < points[i-1][1]:  # Rank went down = moved up
+                if points[i][1] < points[i-1][1]:
                     consecutive += 1
                     max_consecutive = max(max_consecutive, consecutive)
                 else:
@@ -178,12 +174,15 @@ def find_consecutive_risers(platform, chart_type, days=7, min_rises=3):
 
 
 def generate_full_analysis(crawl_time=None):
-    """Generate complete analysis for all charts"""
+    """Generate complete analysis for all charts found at given crawl_time"""
     if not crawl_time:
         crawl_time = get_latest_crawl_time()
     if not crawl_time:
         return None
 
+    # Discover which charts exist at this crawl_time
+    chart_keys = get_all_chart_types_at(crawl_time)
+    
     analysis = {
         'crawl_time': crawl_time,
         'charts': {},
@@ -191,22 +190,23 @@ def generate_full_analysis(crawl_time=None):
         'consecutive_risers': {},
     }
 
-    for platform in ['gp', 'ios']:
-        for chart_type in ['free', 'paid', 'grossing']:
-            key = f"{platform}_{chart_type}"
+    for platform, chart_type in chart_keys:
+        key = f"{platform}_{chart_type}"
+        
+        prev_time = get_previous_crawl_time(crawl_time, platform, chart_type)
+        changes = analyze_chart_changes(platform, chart_type, crawl_time, prev_time)
+        analysis['charts'][key] = {
+            'changes': changes,
+            'previous_time': prev_time,
+        }
 
-            prev_time = get_previous_crawl_time(crawl_time, platform)
-            changes = analyze_chart_changes(platform, chart_type, crawl_time, prev_time)
-            analysis['charts'][key] = {
-                'changes': changes,
-                'previous_time': prev_time,
-            }
-
+        # Category trends only for base chart types (not genre-specific)
+        if ':' not in chart_type:
             cat_trends = analyze_category_trends(platform, chart_type)
             analysis['category_trends'][key] = cat_trends
 
-            risers = find_consecutive_risers(platform, chart_type)
-            analysis['consecutive_risers'][key] = risers
+        risers = find_consecutive_risers(platform, chart_type)
+        analysis['consecutive_risers'][key] = risers
 
     return analysis
 

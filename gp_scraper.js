@@ -3,8 +3,9 @@
  * Google Play Top Charts Scraper
  * Uses Node.js google-play-scraper which has working batchexecute API
  *
- * Usage: node gp_scraper.js <chart_type> [country] [num]
+ * Usage: node gp_scraper.js <chart_type> [country] [num] [category]
  * chart_type: free | paid | grossing
+ * category: GAME (default) | GAME_CASUAL | GAME_PUZZLE | etc.
  * Output: JSON array to stdout
  */
 
@@ -20,6 +21,7 @@ async function main() {
   const chartType = process.argv[2] || 'free';
   const country = process.argv[3] || 'us';
   const num = parseInt(process.argv[4]) || 100;
+  const categoryArg = process.argv[5] || 'GAME';
 
   const collection = chartMap[chartType];
   if (!collection) {
@@ -27,10 +29,18 @@ async function main() {
     process.exit(1);
   }
 
+  // Resolve category
+  const category = gplay.category[categoryArg];
+  if (!category) {
+    process.stderr.write(`Unknown category: ${categoryArg}\n`);
+    process.stderr.write(`Available: ${Object.keys(gplay.category).filter(k => k.startsWith('GAME')).join(', ')}\n`);
+    process.exit(1);
+  }
+
   try {
     const apps = await gplay.list({
       collection: collection,
-      category: gplay.category.GAME,
+      category: category,
       num: num,
       country: country,
       lang: 'en',
@@ -59,7 +69,7 @@ async function main() {
     // Output ONLY JSON to stdout, everything else to stderr
     process.stdout.write(JSON.stringify(results));
   } catch (err) {
-    process.stderr.write(`Error scraping ${chartType}: ${err.message}\n`);
+    process.stderr.write(`Error scraping ${chartType} (${categoryArg}): ${err.message}\n`);
     process.exit(1);
   }
 }
