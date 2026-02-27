@@ -1,158 +1,77 @@
 """Crawlers for Google Play and iOS App Store game rankings"""
 
 import json
+import os
+import subprocess
 import time
-import re
 import traceback
 from datetime import datetime, timezone
 
 import requests
-from google_play_scraper import app as gp_app_detail
 
 from config import COUNTRY, TOP_N
 from database import insert_rankings, log_crawl, init_db
 
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+GP_SCRAPER = os.path.join(SCRIPT_DIR, "gp_scraper.js")
+NODE_PATH = subprocess.check_output(["npm", "root", "-g"], text=True,
+                                     stderr=subprocess.DEVNULL).strip()
+
 
 # ============================================================
-# Google Play Crawler
+# Google Play Crawler (via Node.js google-play-scraper)
 # ============================================================
-
-GP_CHART_URLS = {
-    'free': 'https://play.google.com/store/games?gl={country}&hl=en',
-    'paid': 'https://play.google.com/store/apps/collection/topselling_paid_game?gl={country}&hl=en',
-    'grossing': 'https://play.google.com/store/apps/collection/topgrossing_game?gl={country}&hl=en',
-}
-
-GP_HEADERS = {
-    'User-Agent': 'Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36',
-    'Accept-Language': 'en-US,en;q=0.9',
-}
-
-
-def _extract_gp_app_ids(html):
-    """Extract app IDs from Google Play HTML"""
-    apps = re.findall(r'details\?id=([a-zA-Z0-9._]+)', html)
-    seen = list(dict.fromkeys(apps))  # deduplicate, preserve order
-    return seen
-
-
-def _get_gp_details(app_ids, max_items=100):
-    """Fetch details for a list of GP app IDs"""
-    results = []
-    for i, pkg in enumerate(app_ids[:max_items], 1):
-        try:
-            info = gp_app_detail(pkg, lang='en', country=COUNTRY)
-            results.append({
-                'rank': i,
-                'app_id': pkg,
-                'app_name': info.get('title', pkg),
-                'developer': info.get('developer', ''),
-                'category': info.get('genre', ''),
-                'rating': info.get('score'),
-                'rating_count': info.get('ratings'),
-                'price': info.get('price', 0),
-                'icon_url': info.get('icon', ''),
-                'extra_json': json.dumps({
-                    'installs': info.get('installs', ''),
-                    'free': info.get('free', True),
-                    'containsAds': info.get('containsAds', False),
-                    'contentRating': info.get('contentRating', ''),
-                    'genreId': info.get('genreId', ''),
-                    'url': info.get('url', ''),
-                    'released': info.get('released', ''),
-                    'lastUpdated': str(info.get('updated', '')),
-                    'realInstalls': info.get('realInstalls', 0),
-                    'minInstalls': info.get('minInstalls', 0),
-                }, ensure_ascii=False),
-            })
-            # Rate limiting
-            if i % 10 == 0:
-                time.sleep(0.5)
-                print(f"    ... {i}/{min(len(app_ids), max_items)} apps fetched")
-        except Exception as e:
-            results.append({
-                'rank': i,
-                'app_id': pkg,
-                'app_name': pkg,
-                'developer': None,
-                'category': None,
-                'rating': None,
-                'rating_count': None,
-                'price': None,
-                'icon_url': None,
-                'extra_json': json.dumps({'error': str(e)}),
-            })
-    return results
-
 
 def crawl_gp_chart(chart_type):
-    """Crawl a Google Play game chart"""
-    # Primary: try specific chart URL
-    urls_to_try = []
-    
-    if chart_type == 'free':
-        urls_to_try = [
-            f'https://play.google.com/store/games?gl={COUNTRY}&hl=en',
-            f'https://play.google.com/store/apps/collection/topselling_free_game?gl={COUNTRY}&hl=en',
-        ]
-    elif chart_type == 'paid':
-        urls_to_try = [
-            f'https://play.google.com/store/apps/collection/topselling_paid_game?gl={COUNTRY}&hl=en',
-            f'https://play.google.com/store/apps/top?gl={COUNTRY}&hl=en',
-        ]
-    elif chart_type == 'grossing':
-        urls_to_try = [
-            f'https://play.google.com/store/apps/collection/topgrossing_game?gl={COUNTRY}&hl=en',
-            f'https://play.google.com/store/apps/top?gl={COUNTRY}&hl=en',
-        ]
+    """Crawl a Google Play game chart using Node.js scraper"""
+    env = os.environ.copy()
+    env["NODE_PATH"] = NODE_PATH
 
-    all_app_ids = []
+    try:
+        result = subprocess.run(
+            ["node", GP_SCRAPER, chart_type, COUNTRY, str(TOP_N)],
+            capture_output=True, text=True, timeout=120, env=env,
+        )
 
-    for url in urls_to_try:
-        try:
-            resp = requests.get(url, headers=GP_HEADERS, timeout=30)
-            if resp.status_code == 200:
-                ids = _extract_gp_app_ids(resp.text)
-                if ids:
-                    all_app_ids = ids
-                    print(f"  📍 Got {len(ids)} apps from {url.split('?')[0].split('/')[-1] or 'games'}")
-                    break
-        except Exception as e:
-            continue
+        if result.returncode != 0:
+            print(f"  ❌ Node scraper error: {result.stderr.strip()}")
+            return []
 
-    if not all_app_ids:
-        print(f"  ⚠️ No GP apps found for {chart_type}")
+        # stdout may contain proxychains noise; find the JSON array
+        stdout = result.stdout
+        json_start = stdout.find('[')
+        if json_start < 0:
+            print(f"  ❌ No JSON in output")
+            return []
+
+        raw = json.loads(stdout[json_start:])
+        results = []
+        for item in raw:
+            results.append({
+                'rank': item['rank'],
+                'app_id': item['app_id'],
+                'app_name': item['app_name'],
+                'developer': item.get('developer'),
+                'category': item.get('category'),
+                'rating': item.get('rating'),
+                'rating_count': item.get('rating_count'),
+                'price': item.get('price'),
+                'icon_url': item.get('icon_url'),
+                'extra_json': json.dumps(item.get('extra', {}), ensure_ascii=False),
+            })
+        return results
+
+    except subprocess.TimeoutExpired:
+        print(f"  ❌ Node scraper timeout (120s)")
         return []
-
-    # Filter to games only (by checking genreId) and get details
-    print(f"  📥 Fetching details for {min(len(all_app_ids), TOP_N)} apps...")
-    results = _get_gp_details(all_app_ids, TOP_N)
-
-    # Filter: only keep actual games (genreId starts with GAME_)
-    game_results = []
-    non_game_count = 0
-    for r in results:
-        try:
-            extra = json.loads(r.get('extra_json', '{}') or '{}')
-            genre_id = extra.get('genreId', '')
-            if genre_id.startswith('GAME') or not genre_id:
-                game_results.append(r)
-            else:
-                non_game_count += 1
-        except:
-            game_results.append(r)
-
-    if non_game_count > 0:
-        print(f"  🎮 Filtered out {non_game_count} non-game apps")
-        # Re-rank
-        for i, r in enumerate(game_results, 1):
-            r['rank'] = i
-
-    return game_results
+    except Exception as e:
+        print(f"  ❌ GP crawl error: {e}")
+        traceback.print_exc()
+        return []
 
 
 # ============================================================
-# iOS App Store Crawler
+# iOS App Store Crawler (RSS feeds)
 # ============================================================
 
 IOS_FEEDS_V2 = {
@@ -171,16 +90,12 @@ IOS_HEADERS = {
 }
 
 
-def _parse_ios_v2_feed(data, top_n=100):
-    """Parse iOS RSS v2 feed"""
+def _parse_ios_v2(data, top_n=100):
+    """Parse Apple RSS v2 feed"""
     results = []
-    feed = data.get('feed', {})
-    apps = feed.get('results', [])
-
-    for i, app in enumerate(apps[:top_n], 1):
+    for i, app in enumerate(data.get('feed', {}).get('results', [])[:top_n], 1):
         genres = app.get('genres', [])
         category = genres[0].get('name', '') if genres else ''
-
         results.append({
             'rank': i,
             'app_id': app.get('id', ''),
@@ -200,31 +115,21 @@ def _parse_ios_v2_feed(data, top_n=100):
     return results
 
 
-def _parse_ios_old_feed(data, top_n=100):
-    """Parse old iTunes RSS feed"""
+def _parse_ios_old(data, top_n=100):
+    """Parse old iTunes RSS feed (genre=6014 = Games)"""
     results = []
-    entries = data.get('feed', {}).get('entry', [])
+    for i, entry in enumerate(data.get('feed', {}).get('entry', [])[:top_n], 1):
+        cat = entry.get('category', {})
+        category = cat.get('attributes', {}).get('label', '') if isinstance(cat, dict) else ''
 
-    for i, entry in enumerate(entries[:top_n], 1):
-        category = ''
-        cat_data = entry.get('category', {})
-        if isinstance(cat_data, dict):
-            category = cat_data.get('attributes', {}).get('label', '')
-
-        app_id = ''
         id_data = entry.get('id', {})
-        if isinstance(id_data, dict):
-            app_id = id_data.get('attributes', {}).get('im:id', '')
+        app_id = id_data.get('attributes', {}).get('im:id', '') if isinstance(id_data, dict) else ''
 
-        app_name = ''
         name_data = entry.get('im:name', {})
-        if isinstance(name_data, dict):
-            app_name = name_data.get('label', '')
+        app_name = name_data.get('label', '') if isinstance(name_data, dict) else ''
 
-        developer = ''
-        artist_data = entry.get('im:artist', {})
-        if isinstance(artist_data, dict):
-            developer = artist_data.get('label', '')
+        artist = entry.get('im:artist', {})
+        developer = artist.get('label', '') if isinstance(artist, dict) else ''
 
         results.append({
             'rank': i,
@@ -237,8 +142,8 @@ def _parse_ios_old_feed(data, top_n=100):
             'price': None,
             'icon_url': '',
             'extra_json': json.dumps({
-                'summary': (entry.get('summary', {}).get('label', '') or '')[:200],
-                'releaseDate': entry.get('im:releaseDate', {}).get('label', ''),
+                'summary': ((entry.get('summary', {}) or {}).get('label', '') or '')[:200],
+                'releaseDate': (entry.get('im:releaseDate', {}) or {}).get('label', ''),
             }, ensure_ascii=False),
         })
     return results
@@ -246,47 +151,33 @@ def _parse_ios_old_feed(data, top_n=100):
 
 def crawl_ios_chart(chart_type):
     """Crawl an iOS App Store game chart"""
-    results = []
-
-    # Try v2 RSS first (free & paid only, no grossing)
+    # Try v2 RSS first (free & paid)
     v2_url = IOS_FEEDS_V2.get(chart_type)
     if v2_url:
         try:
             resp = requests.get(v2_url, headers=IOS_HEADERS, timeout=30)
             if resp.status_code == 200:
-                results = _parse_ios_v2_feed(resp.json(), TOP_N)
+                results = _parse_ios_v2(resp.json(), TOP_N)
                 if results:
-                    print(f"  📍 Got {len(results)} apps from RSS v2")
+                    print(f"  📍 {len(results)} apps via RSS v2")
                     return results
         except Exception as e:
-            print(f"  ⚠️ iOS RSS v2 failed for {chart_type}: {e}")
+            print(f"  ⚠️ iOS RSS v2 failed: {e}")
 
-    # Fallback: old iTunes RSS (genre=6014 = Games)
+    # Fallback: old iTunes RSS (Games genre=6014)
     old_url = IOS_FEEDS_OLD.get(chart_type)
     if old_url:
         try:
             resp = requests.get(old_url, headers=IOS_HEADERS, timeout=30)
             resp.raise_for_status()
-            results = _parse_ios_old_feed(resp.json(), TOP_N)
+            results = _parse_ios_old(resp.json(), TOP_N)
             if results:
-                print(f"  📍 Got {len(results)} apps from old iTunes RSS")
+                print(f"  📍 {len(results)} apps via iTunes RSS")
                 return results
         except Exception as e:
-            print(f"  ⚠️ iOS old RSS also failed for {chart_type}: {e}")
+            print(f"  ⚠️ iOS old RSS failed: {e}")
 
-    # Last resort: try grossing via different genre path
-    if chart_type == 'grossing':
-        try:
-            url = f"https://rss.applemarketingtools.com/api/v2/{COUNTRY}/apps/top-grossing/{TOP_N}/apps.json"
-            resp = requests.get(url, headers=IOS_HEADERS, timeout=30)
-            if resp.status_code == 200:
-                results = _parse_ios_v2_feed(resp.json(), TOP_N)
-                if results:
-                    return results
-        except:
-            pass
-
-    return results
+    return []
 
 
 # ============================================================
@@ -303,58 +194,56 @@ def run_full_crawl():
     total = 0
     errors = []
 
-    # --- iOS (faster, RSS-based) ---
+    # --- iOS (fast, RSS-based) ---
     for chart_type in ['free', 'paid', 'grossing']:
-        print(f"\n🍎 iOS App Store — {chart_type.upper()}")
+        print(f"\n🍎 iOS — {chart_type.upper()}")
         t0 = time.time()
         try:
             items = crawl_ios_chart(chart_type)
-            duration = time.time() - t0
+            dt = time.time() - t0
             if items:
-                count = insert_rankings(crawl_time, 'ios', chart_type, items)
-                log_crawl(crawl_time, 'ios', chart_type, count, 'ok', duration=duration)
-                print(f"  ✅ {count} games saved ({duration:.1f}s)")
-                total += count
+                n = insert_rankings(crawl_time, 'ios', chart_type, items)
+                log_crawl(crawl_time, 'ios', chart_type, n, 'ok', duration=dt)
+                print(f"  ✅ {n} games ({dt:.1f}s)")
+                total += n
             else:
-                log_crawl(crawl_time, 'ios', chart_type, 0, 'error', 'No results', duration=duration)
+                log_crawl(crawl_time, 'ios', chart_type, 0, 'error', 'No results', duration=dt)
                 errors.append(f"iOS {chart_type}: no results")
                 print(f"  ⚠️ No results")
         except Exception as e:
-            duration = time.time() - t0
-            log_crawl(crawl_time, 'ios', chart_type, 0, 'error', str(e), duration=duration)
+            dt = time.time() - t0
+            log_crawl(crawl_time, 'ios', chart_type, 0, 'error', str(e), duration=dt)
             errors.append(f"iOS {chart_type}: {e}")
-            print(f"  ❌ Error: {e}")
-            traceback.print_exc()
+            print(f"  ❌ {e}")
 
-    # --- Google Play (slower, needs scraping + API) ---
+    # --- Google Play (Node.js scraper) ---
     for chart_type in ['free', 'paid', 'grossing']:
-        print(f"\n📱 Google Play — {chart_type.upper()}")
+        print(f"\n📱 GP — {chart_type.upper()}")
         t0 = time.time()
         try:
             items = crawl_gp_chart(chart_type)
-            duration = time.time() - t0
+            dt = time.time() - t0
             if items:
-                count = insert_rankings(crawl_time, 'gp', chart_type, items)
-                log_crawl(crawl_time, 'gp', chart_type, count, 'ok', duration=duration)
-                print(f"  ✅ {count} games saved ({duration:.1f}s)")
-                total += count
+                n = insert_rankings(crawl_time, 'gp', chart_type, items)
+                log_crawl(crawl_time, 'gp', chart_type, n, 'ok', duration=dt)
+                print(f"  ✅ {n} games ({dt:.1f}s)")
+                total += n
             else:
-                log_crawl(crawl_time, 'gp', chart_type, 0, 'error', 'No results', duration=duration)
+                log_crawl(crawl_time, 'gp', chart_type, 0, 'error', 'No results', duration=dt)
                 errors.append(f"GP {chart_type}: no results")
                 print(f"  ⚠️ No results")
         except Exception as e:
-            duration = time.time() - t0
-            log_crawl(crawl_time, 'gp', chart_type, 0, 'error', str(e), duration=duration)
+            dt = time.time() - t0
+            log_crawl(crawl_time, 'gp', chart_type, 0, 'error', str(e), duration=dt)
             errors.append(f"GP {chart_type}: {e}")
-            print(f"  ❌ Error: {e}")
-            traceback.print_exc()
+            print(f"  ❌ {e}")
 
     print(f"\n{'=' * 50}")
-    print(f"📊 Crawl complete: {total} total entries")
+    print(f"📊 Done: {total} total entries")
     if errors:
-        print(f"⚠️ Errors: {len(errors)}")
-        for err in errors:
-            print(f"   - {err}")
+        print(f"⚠️ {len(errors)} errors:")
+        for e in errors:
+            print(f"   - {e}")
 
     return crawl_time, total, errors
 
