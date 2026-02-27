@@ -2,7 +2,7 @@
 
 Automated game ranking tracker and analyzer for **Google Play** and **iOS App Store**.
 
-Crawls top charts every 12 hours, stores historical data, detects ranking changes, and generates analysis reports.
+Crawls top charts, stores historical data, detects ranking changes, and pushes analysis reports to your team via **Discord, Telegram, Slack, 飞书, 钉钉, 企业微信**.
 
 ## Features
 
@@ -11,116 +11,192 @@ Crawls top charts every 12 hours, stores historical data, detects ranking change
 - 🇺🇸 **US Market** — Focused on the US region (configurable)
 - 🔍 **Change Detection** — Surges, drops, new entries, exits
 - 📉 **Trend Analysis** — Category trends, consecutive risers
-- 🤖 **Automated Reports** — Cron-ready, Discord-friendly output
+- 📡 **Multi-Channel Notifications** — Push reports to 6 platforms
 - 💾 **SQLite Storage** — Lightweight, zero-config database
+
+## Supported Notification Channels
+
+| Channel | Method | Message Format |
+|---------|--------|---------------|
+| 🟣 Discord | Webhook | Markdown |
+| 🔵 Telegram | Bot API | HTML |
+| 🟠 Slack | Incoming Webhook | mrkdwn |
+| 🔷 飞书 (Feishu) | Custom Bot Webhook | Interactive Card |
+| 🔷 钉钉 (DingTalk) | Custom Bot Webhook | Markdown |
+| 🟢 企业微信 (WeCom) | Group Bot Webhook | Markdown |
 
 ## Quick Start
 
 ### Prerequisites
 
 ```bash
+# Python dependencies
 pip install google-play-scraper requests
+
+# Node.js dependency (for Google Play charts)
+npm install -g google-play-scraper
+```
+
+### Setup
+
+```bash
+# Interactive setup wizard — configure notification channels
+python setup_wizard.py
+
+# Or add channels directly
+python setup_wizard.py add discord
+python setup_wizard.py add feishu
+python setup_wizard.py add dingtalk
 ```
 
 ### Run
 
 ```bash
+# Full run: crawl + analyze + report + notify
 python run.py
+
+# Individual steps
+python run.py --crawl     # Crawl only
+python run.py --report    # Report from latest data
+python run.py --notify    # Send latest report to channels
+python run.py --setup     # Interactive setup
 ```
 
-This will:
-1. Crawl all 6 charts (iOS × 3 + GP × 3)
-2. Store results in `rankings.db`
-3. Compare with previous crawl
-4. Generate an analysis report
+### Channel Setup Guides
 
-### Output Example
+<details>
+<summary><b>Discord</b></summary>
 
-```
-📊 游戏榜单分析报告 — 2026-02-27 12:00 UTC
-🇺🇸 美国区 | Top 100
+1. Server Settings → Integrations → Webhooks → New Webhook
+2. Copy Webhook URL
+3. `python setup_wizard.py add discord`
+4. Paste the URL when prompted
 
-iOS App Store
-💰 畅销榜
-🔥 飙升最快
-  1. ⬆️+45 某某大冒险 — Puzzle — #78→#33
-  2. ⬆️+32 战争前线 — Strategy — #55→#23
+</details>
 
-🆕 新上榜
-  1. #18 幻想传说 — RPG 🌟新游戏
-```
+<details>
+<summary><b>Telegram</b></summary>
+
+1. Talk to [@BotFather](https://t.me/BotFather) → `/newbot` → get Bot Token
+2. Add the bot to your group/channel
+3. Get Chat ID: `https://api.telegram.org/bot<TOKEN>/getUpdates`
+4. `python setup_wizard.py add telegram`
+5. Enter Token and Chat ID
+
+</details>
+
+<details>
+<summary><b>Slack</b></summary>
+
+1. Go to [Slack Apps](https://api.slack.com/apps) → Create New App
+2. Features → Incoming Webhooks → Activate → Add to Workspace
+3. Copy Webhook URL
+4. `python setup_wizard.py add slack`
+
+</details>
+
+<details>
+<summary><b>飞书 (Feishu/Lark)</b></summary>
+
+1. 群设置 → 群机器人 → 添加机器人 → 自定义机器人
+2. 复制 Webhook URL
+3. (可选) 开启签名验证，记录密钥
+4. `python setup_wizard.py add feishu`
+
+</details>
+
+<details>
+<summary><b>钉钉 (DingTalk)</b></summary>
+
+1. 群设置 → 智能群助手 → 添加机器人 → 自定义
+2. 安全设置建议选"加签"，记录密钥
+3. 复制 Webhook URL
+4. `python setup_wizard.py add dingtalk`
+
+</details>
+
+<details>
+<summary><b>企业微信 (WeCom)</b></summary>
+
+1. 群聊 → 右上角 → 群机器人 → 添加
+2. 复制 Webhook URL
+3. `python setup_wizard.py add wechat`
+
+</details>
 
 ## Architecture
 
 ```
 game-tracker/
-├── config.py      # Configuration (country, top N, thresholds)
-├── crawler.py     # Google Play & iOS crawlers
-├── database.py    # SQLite schema & queries
-├── analyzer.py    # Ranking change detection & trend analysis
-├── report.py      # Discord-friendly report generator
-├── run.py         # Main entry point
+├── config.py          # Configuration + settings management
+├── settings.json      # User settings (auto-generated)
+├── crawler.py         # GP + iOS crawlers
+├── gp_scraper.js      # Node.js bridge for GP charts
+├── database.py        # SQLite schema & queries
+├── analyzer.py        # Ranking change detection & trends
+├── report.py          # Report generator (markdown)
+├── notify.py          # Multi-channel notification dispatcher
+├── setup_wizard.py    # Interactive channel setup
+├── run.py             # Main entry point
 └── README.md
 ```
 
-## Data Sources
-
-| Platform | Method | Coverage |
-|----------|--------|----------|
-| iOS Free | Apple RSS v2 API | Top 100 |
-| iOS Paid | Apple RSS v2 API | Top 100 |
-| iOS Grossing | iTunes RSS (genre=Games) | Top 100 |
-| GP Free | Web scrape + `google-play-scraper` | ~80 games |
-| GP Paid | Web scrape (limited by GP) | varies |
-| GP Grossing | Web scrape (limited by GP) | varies |
-
-> **Note:** Google Play has restricted public access to chart data. GP coverage may be less than 100 depending on what Google returns.
-
 ## Configuration
 
-Edit `config.py`:
+### settings.json
 
-```python
-COUNTRY = "us"          # Target market
-TOP_N = 100             # How many to track
-RANK_SURGE_THRESHOLD = 15   # Rank jump to flag as "surge"
-NEW_ENTRY_DAYS = 30     # Games released within N days = "new"
+Auto-generated by `setup_wizard.py`. You can also edit manually:
+
+```json
+{
+  "country": "us",
+  "top_n": 100,
+  "charts": ["free", "paid", "grossing"],
+  "platforms": ["ios", "gp"],
+  "rank_surge_threshold": 15,
+  "report_max_items": 10,
+  "notify_channels": ["discord", "feishu"],
+  "channel_config": {
+    "discord": {
+      "webhook_url": "https://discord.com/api/webhooks/...",
+      "mention_role": ""
+    },
+    "feishu": {
+      "webhook_url": "https://open.feishu.cn/open-apis/bot/v2/hook/...",
+      "secret": ""
+    }
+  }
+}
 ```
 
 ## Automation
 
-### With OpenClaw (cron)
-
-Set up a cron job to run every 12 hours:
+### Cron (every 12 hours)
 
 ```bash
-# The cron job runs: python /path/to/game-tracker/run.py
-# and sends the report to your configured channel
-```
-
-### Standalone
-
-```bash
-# Add to system crontab
 0 */12 * * * cd /path/to/game-tracker && python3 run.py >> /var/log/game-tracker.log 2>&1
 ```
+
+### OpenClaw
+
+Use OpenClaw's cron system to schedule runs and deliver reports via your preferred channel.
 
 ## Analysis Capabilities
 
 - **Rank Surges** — Games that jumped ≥15 positions
 - **New Entries** — Games that weren't in the chart last crawl
-- **New Games** — Recently released games that entered the chart
-- **Rank Drops** — Games that fell ≥15 positions
+- **New Games** — Recently released games entering the chart
+- **Rank Drops** — Games that fell significantly
 - **Chart Exits** — Games that dropped out of Top 100
-- **Category Trends** — Which genres are gaining/losing representation
+- **Category Trends** — Which genres are gaining/losing
 - **Consecutive Risers** — Games rising steadily over multiple crawls
 
 ## Use Cases
 
 - 🎯 **Competitive Analysis** — Track competitor game performance
-- 💡 **Market Opportunity** — Spot rising genres and underserved categories
-- 📊 **Investment Research** — Monitor publisher portfolio performance
-- 🚀 **Launch Tracking** — Watch new game launches and their trajectory
+- 💡 **Market Opportunity** — Spot rising genres and gaps
+- 📊 **Investment Research** — Monitor publisher portfolios
+- 🚀 **Launch Tracking** — Watch new game trajectories
 
 ## License
 
