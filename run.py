@@ -3,11 +3,12 @@
 Game Rank Reporter — Main entry point
 
 Usage:
-  python run.py              # Crawl + analyze + report + notify
-  python run.py --crawl      # Crawl only
-  python run.py --report     # Generate report from latest data
-  python run.py --notify     # Send latest report to configured channels
-  python run.py --setup      # Interactive setup wizard
+  python run.py                   # Crawl + analyze + report + notify
+  python run.py --crawl           # Crawl only
+  python run.py --report          # Generate report from latest data
+  python run.py --notify          # Send latest report to configured channels
+  python run.py --export-analysis # Export structured data for AI analysis
+  python run.py --setup           # Interactive setup wizard
 """
 
 import sys
@@ -18,6 +19,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from crawler import run_full_crawl
 from report import generate_report
 from notify import send_report
+from export import export_analysis_data, EXPORT_PATH
 from database import init_db
 
 
@@ -37,10 +39,11 @@ def main():
     crawl_only = '--crawl' in args
     report_only = '--report' in args
     notify_only = '--notify' in args
+    export_only = '--export-analysis' in args
 
     # Default: do everything
-    if not any([crawl_only, report_only, notify_only]):
-        crawl_only = report_only = notify_only = True
+    if not any([crawl_only, report_only, notify_only, export_only]):
+        crawl_only = report_only = notify_only = export_only = True
 
     crawl_time = None
     report = None
@@ -71,7 +74,18 @@ def main():
             f.write(report)
         print(f"\n💾 Saved to {report_path}")
 
-    # Step 3: Send notifications
+    # Step 3: Export analysis data for AI
+    if export_only:
+        print("\n📦 Exporting analysis data for AI...")
+        data = export_analysis_data(crawl_time)
+        if data:
+            total_apps = sum(len(c.get('current', [])) for c in data['charts'].values())
+            print(f"  ✅ Exported {total_apps} app entries across 6 charts")
+            print(f"  📁 {EXPORT_PATH}")
+        else:
+            print("  ❌ No data to export")
+
+    # Step 4: Send notifications
     if notify_only and report:
         print("\n📡 Sending notifications...")
         results = send_report(report)
