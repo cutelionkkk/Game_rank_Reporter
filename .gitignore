@@ -6,6 +6,9 @@
 # Reports (generated)
 latest_report.txt
 
+# User config (contains webhook secrets)
+settings.json
+
 # Python
 __pycache__/
 *.py[cod]

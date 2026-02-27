@@ -1,0 +1,38 @@
+{
+  "country": "us",
+  "top_n": 100,
+  "charts": ["free", "paid", "grossing"],
+  "platforms": ["ios", "gp"],
+  "rank_surge_threshold": 15,
+  "new_entry_days": 30,
+  "consecutive_rise_days": 3,
+  "category_trend_window": 7,
+  "report_max_items": 10,
+  "report_language": "zh",
+  "notify_channels": ["discord"],
+  "channel_config": {
+    "discord": {
+      "webhook_url": "https://discord.com/api/webhooks/YOUR_WEBHOOK_ID/YOUR_WEBHOOK_TOKEN",
+      "mention_role": ""
+    },
+    "telegram": {
+      "bot_token": "123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11",
+      "chat_id": "-1001234567890"
+    },
+    "slack": {
+      "webhook_url": "https://hooks.slack.com/services/T00000000/B00000000/XXXXXXXXXXXXXXXXXXXXXXXX",
+      "channel": ""
+    },
+    "feishu": {
+      "webhook_url": "https://open.feishu.cn/open-apis/bot/v2/hook/xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+      "secret": ""
+    },
+    "dingtalk": {
+      "webhook_url": "https://oapi.dingtalk.com/robot/send?access_token=XXXXXXXXXXXXXXXXXXXXXXXX",
+      "secret": "SECxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+    },
+    "wechat": {
+      "webhook_url": "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+    }
+  }
+}
