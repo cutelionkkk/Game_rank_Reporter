@@ -47,6 +47,7 @@ def main():
 
     crawl_time = None
     report = None
+    parts = []
 
     # Step 1: Crawl
     if crawl_only:
