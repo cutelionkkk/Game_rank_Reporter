@@ -258,7 +258,7 @@ CHANNEL_NAMES = {
 
 
 def send_report(report, channels=None):
-    """Send report to all configured channels (or specified ones)"""
+    """Send report (single string) to all configured channels"""
     settings = load_settings()
     active_channels = channels or settings.get('notify_channels', [])
     channel_config = settings.get('channel_config', {})
@@ -282,6 +282,51 @@ def send_report(report, channels=None):
             results[ch] = (ok, msg)
             status = "✅" if ok else "❌"
             print(f"  {status} {ch_name}: {msg}")
+        except Exception as e:
+            results[ch] = (False, str(e))
+            print(f"  ❌ {ch_name}: {e}")
+            traceback.print_exc()
+
+    return results
+
+
+def send_report_parts(parts: list, channels=None):
+    """Send each chart as a separate message to all configured channels"""
+    settings = load_settings()
+    active_channels = channels or settings.get('notify_channels', [])
+    channel_config = settings.get('channel_config', {})
+
+    if not active_channels:
+        print("  ℹ️ No notification channels configured")
+        return {}
+
+    results = {}
+    for ch in active_channels:
+        sender = SENDERS.get(ch)
+        if not sender:
+            results[ch] = (False, f"Unknown channel: {ch}")
+            continue
+
+        conf = channel_config.get(ch, {})
+        ch_name = CHANNEL_NAMES.get(ch, ch)
+        sent = 0
+        last_err = None
+
+        try:
+            for part in parts:
+                ok, msg = sender(part, conf)
+                if ok:
+                    sent += 1
+                else:
+                    last_err = msg
+                time.sleep(1.2)  # avoid Telegram rate limits (30 msg/sec global, 1/sec per chat)
+
+            if last_err:
+                results[ch] = (False, f"Sent {sent}/{len(parts)}, last error: {last_err}")
+                print(f"  ⚠️ {ch_name}: Sent {sent}/{len(parts)} messages")
+            else:
+                results[ch] = (True, f"Sent {sent} message(s)")
+                print(f"  ✅ {ch_name}: Sent {sent} message(s)")
         except Exception as e:
             results[ch] = (False, str(e))
             print(f"  ❌ {ch_name}: {e}")

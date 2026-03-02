@@ -17,8 +17,8 @@ import os
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from crawler import run_full_crawl
-from report import generate_report
-from notify import send_report
+from report import generate_report, generate_report_parts
+from notify import send_report, send_report_parts
 from export import export_analysis_data, EXPORT_PATH
 from database import init_db
 
@@ -61,18 +61,21 @@ def main():
     # Step 2: Generate report
     if report_only or notify_only:
         print("\n📝 Generating report...")
-        report = generate_report(crawl_time)
+        parts = generate_report_parts(crawl_time)
+        report = '\n\n' + '─' * 40 + '\n\n'.join(parts)
 
-        # Print to stdout
+        # Print to stdout (stripped of HTML tags for readability)
+        import re
+        clean = re.sub(r'<[^>]+>', '', report)
         print("\n" + "=" * 50)
-        print(report)
+        print(clean[:3000] + ('\n...(truncated)' if len(clean) > 3000 else ''))
         print("=" * 50)
 
-        # Save to file
+        # Save full report to file
         report_path = os.path.join(os.path.dirname(__file__), "latest_report.txt")
         with open(report_path, 'w', encoding='utf-8') as f:
-            f.write(report)
-        print(f"\n💾 Saved to {report_path}")
+            f.write(clean)
+        print(f"\n💾 Saved to {report_path} ({len(parts)} sections)")
 
     # Step 3: Export analysis data for AI
     if export_only:
@@ -85,10 +88,10 @@ def main():
         else:
             print("  ❌ No data to export")
 
-    # Step 4: Send notifications
-    if notify_only and report:
+    # Step 4: Send notifications (one message per chart)
+    if notify_only and parts:
         print("\n📡 Sending notifications...")
-        results = send_report(report)
+        results = send_report_parts(parts)
         if not results:
             print("  ℹ️ No channels configured. Run: python run.py --setup")
 

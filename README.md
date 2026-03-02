@@ -230,36 +230,46 @@ python run.py --notify     # 推送最新报告到已配置渠道
 
 ## 报告示例
 
+每个榜单独立发一条消息，格式简洁：
+
 ```
-📊 游戏榜单分析报告 — 2026-02-27 12:00 UTC
-🇺🇸 美国区 | Top 100
+💰 iOS 益智畅销榜 Top 10 — 2026-02-27 12:00 UTC
 
-──────────────────────────────
-iOS App Store
+#1 Royal Match（三消益智）  ⬆️+3
+    Dream Games
+#2 Gossip Harbor（合并+叙事）
+    Microfun Limited
+#3 Candy Crush Saga（三消消除）  ⬇️-1
+    King
+#4 Royal Kingdom（三消益智）  🆕
+    Dream Games
+...
 
-💰 畅销榜
-🔥 飙升最快
-  1. ⬆️+45 Royal Kingdom — Simulation — #78→#33
-  2. ⬆️+32 Whiteout Survival — Strategy — #55→#23
-  3. ⬆️+28 Kingshot — Strategy — #42→#14
-
-🆕 新上榜
-  1. #18 SomeNewRPG — RPG 🌟新游戏
-  2. #35 AnotherGame — Casual
-
-📈 品类趋势（7日）
-  - Strategy: 5→8款 (+3)
-  - Simulation: 3→5款 (+2)
-  - Casual 持续强势，Top 20 占 6 席
-
-──────────────────────────────
-Google Play
-
-💰 畅销榜
-🔥 飙升最快
-  1. ⬆️+38 MONOPOLY GO! — Board — #45→#7
-  ...
+📊 本轮变动：
+  🔥 飙升: Royal Kingdom（三消益智）#15→#4（共3款↑）
+  🆕 新上榜: Royal Kingdom(#4), Pixel Flow!(#7)
+  🚪 跌出: Block Puzzle Master, Tile Blast
 ```
+
+---
+
+## 关于买量分析功能
+
+> ⚠️ **为什么报告中没有买量数据？**
+
+我们评估了以下主流买量数据平台的可行性：
+
+| 平台 | 状态 | 原因 |
+|------|------|------|
+| **Sensor Tower** | ❌ 不可用 | 需要账号，API 调用受限 |
+| **AppFollow** | ❌ 不可用 | 需要登录，无公开 API |
+| **AppMagic** | ❌ 不可用 | 付费平台，无公开数据 |
+| **MobileAction** | ❌ 不可用 | 需要账号认证 |
+| **data.ai (AppAnnie)** | ❌ 不可用 | 企业级收费服务 |
+
+**结论**：所有主流买量/广告情报平台均需要付费账号且明确禁止自动化抓取（违反 ToS 可能导致封号）。为保证数据真实可靠、不编造，我们选择不接入这些来源。
+
+如果你有上述平台的 API Access，欢迎提 PR 贡献买量数据模块。
 
 ---
 
@@ -457,12 +467,15 @@ ORDER BY rank LIMIT 10;
 
 ## Roadmap
 
+- [x] 按榜单分条发送 ✅
+- [x] 游戏玩法类型分析（基于规则推断 + web 搜索缓存）✅
 - [ ] 支持更多地区同时追踪（US + JP + KR）
 - [ ] 增加 Web Dashboard（可选）
 - [ ] 游戏详情数据采集（评分、评论数、下载量变化）
 - [ ] 周报 / 月报汇总模式
 - [ ] 自定义监控名单（指定追踪某些游戏）
 - [ ] 接入更多数据源（Steam, Nintendo eShop）
+- [ ] 买量情报（待有合规 API 接口后接入）
 
 ---
 
