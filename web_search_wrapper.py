@@ -31,21 +31,37 @@ def _search_via_requests(query: str, count: int) -> list[dict]:
     if not api_key:
         return []
 
-    import requests
-    resp = requests.get(
-        'https://api.search.brave.com/res/v1/web/search',
-        params={'q': query, 'count': count},
-        headers={
-            'Accept': 'application/json',
-            'Accept-Encoding': 'gzip',
-            'X-Subscription-Token': api_key,
-        },
-        timeout=10,
-    )
-    if resp.status_code != 200:
-        return []
+    try:
+        from scrapling.fetchers import Fetcher as ScraplingFetcher
+        page = ScraplingFetcher.get(
+            'https://api.search.brave.com/res/v1/web/search',
+            params={'q': query, 'count': count},
+            headers={
+                'Accept': 'application/json',
+                'Accept-Encoding': 'gzip',
+                'X-Subscription-Token': api_key,
+            },
+            timeout=10,
+        )
+        if page.status != 200:
+            return []
+        data = page.json()
+    except ImportError:
+        import requests
+        resp = requests.get(
+            'https://api.search.brave.com/res/v1/web/search',
+            params={'q': query, 'count': count},
+            headers={
+                'Accept': 'application/json',
+                'Accept-Encoding': 'gzip',
+                'X-Subscription-Token': api_key,
+            },
+            timeout=10,
+        )
+        if resp.status_code != 200:
+            return []
+        data = resp.json()
 
-    data = resp.json()
     results = []
     for item in data.get('web', {}).get('results', [])[:count]:
         results.append({

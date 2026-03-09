@@ -7,7 +7,12 @@ import time
 import traceback
 from datetime import datetime, timezone
 
-import requests
+try:
+    from scrapling.fetchers import Fetcher as ScraplingFetcher
+    _USE_SCRAPLING = True
+except ImportError:
+    import requests
+    _USE_SCRAPLING = False
 
 from config import COUNTRY, TOP_N, load_settings
 from database import insert_rankings, log_crawl, init_db
@@ -219,9 +224,16 @@ def crawl_ios_chart(chart_type, genre_id="all", country=None, top_n=None):
         v2_url = _ios_v2_rss_url(chart_type, country, top_n)
         if v2_url:
             try:
-                resp = requests.get(v2_url, headers=IOS_HEADERS, timeout=30)
-                if resp.status_code == 200:
-                    results = _parse_ios_v2(resp.json(), top_n)
+                if _USE_SCRAPLING:
+                    page = ScraplingFetcher.get(v2_url, headers=IOS_HEADERS, timeout=30)
+                    ok = page.status == 200
+                    get_json = page.json
+                else:
+                    resp = requests.get(v2_url, headers=IOS_HEADERS, timeout=30)
+                    ok = resp.status_code == 200
+                    get_json = resp.json
+                if ok:
+                    results = _parse_ios_v2(get_json(), top_n)
                     if results:
                         print(f"  📍 {len(results)} apps via RSS v2")
                         return results
@@ -232,9 +244,16 @@ def crawl_ios_chart(chart_type, genre_id="all", country=None, top_n=None):
     old_url = _ios_old_rss_url(chart_type, genre_id, country, top_n)
     if old_url:
         try:
-            resp = requests.get(old_url, headers=IOS_HEADERS, timeout=30)
-            resp.raise_for_status()
-            results = _parse_ios_old(resp.json(), top_n)
+            if _USE_SCRAPLING:
+                page = ScraplingFetcher.get(old_url, headers=IOS_HEADERS, timeout=30)
+                if page.status != 200:
+                    raise Exception(f"HTTP {page.status}")
+                resp_json = page.json
+            else:
+                resp = requests.get(old_url, headers=IOS_HEADERS, timeout=30)
+                resp.raise_for_status()
+                resp_json = resp.json
+            results = _parse_ios_old(resp_json(), top_n)
             if results:
                 source = f"iTunes RSS (genre={genre.get('ios_genre_id')})"
                 print(f"  📍 {len(results)} apps via {source}")
