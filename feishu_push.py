@@ -107,64 +107,80 @@ class FeishuClient:
         raise RuntimeError('飞书投递失败')
 
 
-def _init_outbox():
+def _init_outbox(trial=False):
     init_db()
+    table = 'feishu_trial_outbox' if trial else 'feishu_outbox'
+    field = 'delivery_key' if trial else 'delivery_date'
     with get_db() as conn:
-        conn.execute('''CREATE TABLE IF NOT EXISTS feishu_outbox (
-            delivery_date TEXT NOT NULL, app_id TEXT NOT NULL,
+        conn.execute(f'''CREATE TABLE IF NOT EXISTS {table} (
+            {field} TEXT NOT NULL, app_id TEXT NOT NULL,
             recipient_type TEXT NOT NULL, recipient_id TEXT NOT NULL,
             part INTEGER NOT NULL, content TEXT NOT NULL, message_uuid TEXT NOT NULL,
             sent_at TEXT, message_id TEXT, error TEXT,
-            PRIMARY KEY(delivery_date,app_id,recipient_type,recipient_id,part))''')
+            PRIMARY KEY({field},app_id,recipient_type,recipient_id,part))''')
     conn.close()
 
 
 def send_daily_report(parts, config=None, day=None, client=None):
     """One immutable daily report per recipient; retries resume failed deliveries."""
+    return _send_report(parts, config, day, client)
+
+
+def send_trial_report(parts, trial_id, config=None, day=None, client=None):
+    """An explicitly requested trial has its own immutable, retryable ledger."""
+    if not isinstance(trial_id, str) or not re.fullmatch(r'[A-Za-z0-9_-]{1,64}', trial_id):
+        raise ValueError('试推批次标识无效')
+    return _send_report(parts, config, day, client, trial_id)
+
+
+def _send_report(parts, config, day, client, trial_id=None):
     recipients = recipients_from_config(config)
     client = client or FeishuClient(config)
     day = day or datetime.now(ZoneInfo('Asia/Shanghai')).date().isoformat()
     if not re.fullmatch(r'\d{4}-\d{2}-\d{2}',day):
         raise ValueError('日报日期格式错误')
+    table = 'feishu_trial_outbox' if trial_id else 'feishu_outbox'
+    field = 'delivery_key' if trial_id else 'delivery_date'
+    delivery_key = day + ':' + trial_id if trial_id else day
     chunks = split_utf8(plain_report(parts))
     if not chunks:
         raise ValueError('日报内容为空，未发送')
     with monitor_lock():
-        _init_outbox()
+        _init_outbox(trial=bool(trial_id))
         with get_db() as conn:
             conn.execute('BEGIN IMMEDIATE')
             for recipient in recipients:
                 # A retry must use the original payload even if collection results changed.
-                existing = conn.execute('''SELECT 1 FROM feishu_outbox WHERE delivery_date=?
+                existing = conn.execute(f'''SELECT 1 FROM {table} WHERE {field}=?
                     AND app_id=? AND recipient_type=? AND recipient_id=? LIMIT 1''',
-                    (day,client.app_id,recipient['type'],recipient['id'])).fetchone()
+                    (delivery_key,client.app_id,recipient['type'],recipient['id'])).fetchone()
                 if existing:
                     continue
                 for index,chunk in enumerate(chunks):
-                    title = f'游戏监测日报 · {day}' + (f'（{index+1}/{len(chunks)}）' if len(chunks)>1 else '')
+                    title = ('游戏雷达试推 · 美国免费榜' if trial_id else '游戏监测日报') + f' · {day}' + (f'（{index+1}/{len(chunks)}）' if len(chunks)>1 else '')
                     content = json.dumps({'zh_cn':{'title':title,'content':[[{'tag':'text','text':line or ' '}] for line in chunk.split('\n')]}},ensure_ascii=False)
-                    seed = json.dumps([day,client.app_id,recipient['type'],recipient['id'],index],ensure_ascii=False)
+                    seed = json.dumps([delivery_key,client.app_id,recipient['type'],recipient['id'],index],ensure_ascii=False)
                     message_uuid = hashlib.sha256(seed.encode()).hexdigest()[:40]
-                    conn.execute('''INSERT INTO feishu_outbox
-                        (delivery_date,app_id,recipient_type,recipient_id,part,content,message_uuid)
-                        VALUES (?,?,?,?,?,?,?)''',(day,client.app_id,recipient['type'],recipient['id'],index,content,message_uuid))
+                    conn.execute(f'''INSERT INTO {table}
+                        ({field},app_id,recipient_type,recipient_id,part,content,message_uuid)
+                        VALUES (?,?,?,?,?,?,?)''',(delivery_key,client.app_id,recipient['type'],recipient['id'],index,content,message_uuid))
         conn.close()
         sent, skipped, failures = 0, 0, []
         for number,recipient in enumerate(recipients,1):
-            rows = query('''SELECT * FROM feishu_outbox WHERE delivery_date=? AND app_id=?
+            rows = query(f'''SELECT * FROM {table} WHERE {field}=? AND app_id=?
                 AND recipient_type=? AND recipient_id=? ORDER BY part''',
-                (day,client.app_id,recipient['type'],recipient['id']))
+                (delivery_key,client.app_id,recipient['type'],recipient['id']))
             for row in rows:
                 if row['sent_at']:
                     skipped += 1;continue
                 try:
                     message_id = client.send(recipient,row['content'],row['message_uuid'])
                     with get_db() as conn:
-                        conn.execute('UPDATE feishu_outbox SET sent_at=?,message_id=?,error=NULL WHERE message_uuid=?',
+                        conn.execute(f'UPDATE {table} SET sent_at=?,message_id=?,error=NULL WHERE message_uuid=?',
                                      (utcnow(),message_id,row['message_uuid']))
                     conn.close();sent += 1
                 except (RuntimeError,ValueError) as exc:
                     with get_db() as conn:
-                        conn.execute('UPDATE feishu_outbox SET error=? WHERE message_uuid=?',(str(exc),row['message_uuid']))
+                        conn.execute(f'UPDATE {table} SET error=? WHERE message_uuid=?',(str(exc),row['message_uuid']))
                     conn.close();failures.append(f'接收人 {number}，第 {row["part"]+1} 部分：{exc}')
         return dict(sent=sent,skipped=skipped,failures=failures,recipients=len(recipients))
