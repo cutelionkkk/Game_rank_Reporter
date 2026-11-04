@@ -7,7 +7,7 @@
 <p align="center">
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-blue.svg?style=for-the-badge" alt="MIT License"></a>
   <a href="https://www.python.org/"><img src="https://img.shields.io/badge/Python-3.10+-green.svg?style=for-the-badge&logo=python&logoColor=white" alt="Python 3.10+"></a>
-  <a href="https://nodejs.org/"><img src="https://img.shields.io/badge/Node.js-18+-green.svg?style=for-the-badge&logo=node.js&logoColor=white" alt="Node.js 18+"></a>
+  <a href="https://nodejs.org/"><img src="https://img.shields.io/badge/Node.js-22+-green.svg?style=for-the-badge&logo=node.js&logoColor=white" alt="Node.js 22+"></a>
   <a href="https://github.com/cutelionkkk/Game_rank_Reporter/stargazers"><img src="https://img.shields.io/github/stars/cutelionkkk/Game_rank_Reporter?style=for-the-badge" alt="GitHub Stars"></a>
 </p>
 
@@ -18,6 +18,26 @@
 <p align="center">
   <a href="#快速上手">快速开始</a> · <a href="#ai-agent-一键安装">AI Agent 安装</a> · <a href="#支持的通知渠道">通知渠道</a> · <a href="#ai-分析能力">AI 分析</a> · <a href="#设计理念">设计理念</a>
 </p>
+
+---
+
+## 本地网页：选择榜单和公司
+
+新增本地工作台，支持 **商店 × 国家 × 榜单 × 品类** 选择、爬升阈值/对比窗口，以及**开发者搜索、关注名单和独立公司新游监测**。
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+npm ci
+python run.py --serve --open-browser
+```
+
+打开 `http://127.0.0.1:8765`，在“榜单版块”和“关注公司”中保存选择，再点“立即监测”。首次采集建立基线。网页不会发送通知；已有每日任务继续运行 `run.py` 即可。macOS 可双击 `启动游戏雷达.command`。
+
+完整说明、来源限制、旧数据库迁移和 JSON 格式变更见 **[选择性监测使用说明](docs/MONITORING.md)**。
+
+![本地榜单选择页面](docs/dashboard-preview.jpg)
 
 ---
 
@@ -33,7 +53,7 @@
 
 **每天花 30 分钟翻排行榜？不需要了。**
 
-Game Rank Reporter 每 12 小时自动抓取 6 个榜单（GP + iOS × 免费/付费/畅销），对比历史数据，把**值得关注的变动**推送到你的飞书、钉钉、Discord 或任何你常用的工具。
+Game Rank Reporter 按保存的范围采集榜单和公司目录，对比历史数据，生成监测报告。设置每日任务和通知渠道后，可定期推送到飞书、钉钉、Discord 等工具。
 
 > ⭐ **Star 这个项目**——我们会持续优化分析算法、接入更多数据源。排行榜数据的价值在于长期积累，越早开始追踪越好。
 
@@ -42,7 +62,7 @@ Game Rank Reporter 每 12 小时自动抓取 6 个榜单（GP + iOS × 免费/�
 | | |
 |---|---|
 | 💰 **完全免费** | 不需要任何 API Key，不需要付费服务。数据来源全部是公开渠道 |
-| 🔄 **全自动运行** | 设置好 cron 后就不用管了，有变动自动推送，没变动不打扰 |
+| 🔄 **全自动运行** | 设置好 cron 后就不用管了，按计划生成并推送报告 |
 | 📡 **6 个通知渠道** | Discord、Telegram、Slack、飞书、钉钉、企业微信——团队常用的基本都覆盖 |
 | 📊 **不只是数据** | 不是简单搬运排名，而是分析变动：飙升、新上榜、品类趋势、持续上升 |
 | 💾 **历史可追溯** | SQLite 存储所有历史数据，随时可以回溯任意时间点的排名 |
@@ -54,10 +74,10 @@ Game Rank Reporter 每 12 小时自动抓取 6 个榜单（GP + iOS × 免费/�
 
 | 平台 | 免费榜 | 付费榜 | 畅销榜 | 数据量 | 数据来源 |
 |------|:------:|:------:|:------:|--------|---------|
-| 🍎 **iOS App Store** | ✅ Top 100 | ✅ Top 100 | ✅ Top 100 | 完整 | Apple RSS / iTunes API |
-| 📱 **Google Play** | ✅ Top 100 | ✅ Top 100 | ✅ Top 100 | 完整 | google-play-scraper (Node.js) |
+| 🍎 **iOS App Store** | ✅ Top 100 | ✅ Top 100 | ✅ Top 100 | 按来源返回 | Apple RSS / iTunes API |
+| 📱 **Google Play** | ✅ Top 100 | ✅ Top 100 | ✅ Top 100 | 按来源返回 | google-play-scraper (Node.js) |
 
-> **为什么 GP 用 Node.js？** Google Play 2025 年把 chart 页面改成了纯 SPA，Python 库拿不到数据了。Node.js 的 `google-play-scraper` 直接调用 GP 内部的 batchexecute RPC，稳定可靠。
+> **为什么 GP 用 Node.js？** Google Play 2025 年把 chart 页面改成了纯 SPA，Python 库拿不到数据了。Node.js 的 `google-play-scraper` 直接调用 GP 内部的 batchexecute RPC，需要关注接口变化及采集失败状态。
 
 ---
 
@@ -65,16 +85,16 @@ Game Rank Reporter 每 12 小时自动抓取 6 个榜单（GP + iOS × 免费/�
 
 > ⚠️ **重要提示：第一次抓取不会有分析结果！**
 >
-> 排名变动分析（飙升、新上榜、暴跌、跌出榜单等）需要**至少两次抓取数据**进行对比。第一次运行只会保存当前排名快照，**从第二次运行开始**才会生成完整的变动分析报告。建议设置定时任务（每 12 小时一次），第二次运行后即可看到完整分析。
+> 排名变动分析（飙升、新上榜、暴跌、跌出榜单等）需要**至少两次抓取数据**进行对比。第一次运行只会保存当前排名快照，积累覆盖所选窗口的历史后才会生成变动分析（默认 24 小时）；选择“上次成功采集”则从第二次成功快照开始比较。
 
 | 分析维度 | 说明 | 触发条件 |
 |---------|------|---------|
-| 🔥 **排名飙升** | 排名大幅上升的游戏 | 单次上升 ≥15 名（可配置） |
+| 🔥 **排名飙升** | 排名大幅上升的游戏 | 所选窗口内上升 ≥15 名（可配置） |
 | 🆕 **新上榜** | 上次不在榜、这次出现了 | 对比前后两次抓取 |
 | 🌟 **新游戏** | 上线 30 天内就进入榜单 | 根据发布日期判断 |
 | 📉 **排名暴跌** | 排名大幅下降 | 单次下降 ≥15 名 |
 | 🚪 **跌出榜单** | 上次在 Top 100，这次没了 | 对比前后两次抓取 |
-| 📈 **品类趋势** | 哪些游戏品类在上升/下降 | 7 天窗口内的品类分布变化 |
+| 📈 **品类趋势** | 哪些游戏品类在上升/下降 | 本次与对比快照的品类分布变化 |
 | 🚀 **持续上升** | 连续多次排名上升的游戏 | 连续 ≥3 次上升 |
 
 ---
@@ -169,7 +189,7 @@ Game Rank Reporter 每 12 小时自动抓取 6 个榜单（GP + iOS × 免费/�
 
 1. `git clone` 克隆仓库
 2. `pip install` 安装 Python 依赖
-3. `npm install -g google-play-scraper` 安装 Node.js 依赖
+3. `npm ci` 安装 Node.js 依赖
 4. 运行首次抓取验证安装
 5. 交互式配置通知渠道
 6. 可选：设置定时任务
@@ -184,10 +204,10 @@ Game Rank Reporter 每 12 小时自动抓取 6 个榜单（GP + iOS × 免费/�
 
 ```bash
 # Python 依赖
-pip install google-play-scraper requests
+pip install -r requirements.txt
 
 # Node.js 依赖 (Google Play 榜单需要)
-npm install -g google-play-scraper
+npm ci
 ```
 
 ### 2. 配置通知渠道（可选）
@@ -284,7 +304,7 @@ python run.py --notify     # 推送最新报告到已配置渠道
 ### 导出数据给 AI
 
 ```bash
-# 抓取 + 导出结构化分析数据
+# 从最近一次采集导出结构化分析数据
 python run.py --export-analysis
 
 # 生成 analysis_data.json，包含所有榜单数据 + 变动信息
@@ -350,7 +370,7 @@ game-tracker/
 | 功能 | 选型 | 为什么选它 |
 |------|------|-----------|
 | iOS 数据 | Apple RSS + iTunes API | 官方数据源，免费，不需要认证 |
-| GP 数据 | [google-play-scraper](https://github.com/nicolewhite/google-play-scraper) (Node.js) | 47K+ 下载/周，内置 batchexecute RPC |
+| GP 数据 | [google-play-scraper](https://github.com/facundoolano/google-play-scraper) (Node.js) | 47K+ 下载/周，内置 batchexecute RPC |
 | 数据存储 | SQLite | 零配置，单文件，SQL 查询灵活 |
 | 通知推送 | Webhook / Bot API | 各平台原生接口，不依赖第三方服务 |
 
@@ -404,7 +424,7 @@ game-tracker/
 <details>
 <summary><strong>Google Play 抓不到数据怎么办？</strong></summary>
 
-GP 的 chart 页面已经改成纯 SPA，Python 的 HTTP 请求拿不到数据。本项目通过 Node.js 的 `google-play-scraper` 库解决，它调用的是 GP 内部的 batchexecute RPC 接口。确保你装了 `npm install -g google-play-scraper`。
+GP 的 chart 页面已经改成纯 SPA，Python 的 HTTP 请求拿不到数据。本项目通过 Node.js 的 `google-play-scraper` 库解决，它调用的是 GP 内部的 batchexecute RPC 接口。确保你装了 `npm ci`。
 
 </details>
 
@@ -473,8 +493,9 @@ ORDER BY rank LIMIT 10;
 
 - [x] 按榜单分条发送 ✅
 - [x] 游戏玩法类型分析（基于规则推断 + web 搜索缓存）✅
-- [ ] 支持更多地区同时追踪（US + JP + KR）
-- [ ] 增加 Web Dashboard（可选）
+- [x] 支持更多地区同时追踪（US + JP + KR）
+- [x] 本地 Web Dashboard：多维版块选择、公司搜索和关注名单
+- [x] 公司目录新游发现，独立于榜单
 - [ ] 游戏详情数据采集（评分、评论数、下载量变化）
 - [ ] 周报 / 月报汇总模式
 - [ ] 自定义监控名单（指定追踪某些游戏）
@@ -485,7 +506,7 @@ ORDER BY rank LIMIT 10;
 
 ## 致谢
 
-[google-play-scraper](https://github.com/nicolewhite/google-play-scraper) · [Apple RSS Feed](https://rss.applemarketingtools.com) · [SQLite](https://sqlite.org)
+[google-play-scraper](https://github.com/facundoolano/google-play-scraper) · [Apple RSS Feed](https://rss.applemarketingtools.com) · [SQLite](https://sqlite.org)
 
 ## License
 

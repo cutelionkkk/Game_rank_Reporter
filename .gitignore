@@ -36,4 +36,11 @@ env/
 
 # OS
 .DS_Store
+
+# Local web / dependencies / migration backup
+node_modules/
+*.db.pre-country.bak
+.settings-*.tmp
+.monitor.lock
+*.log
 Thumbs.db

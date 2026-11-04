@@ -57,9 +57,9 @@ GENRES = {
         "gp_category": "GAME_CASINO",
     },
     "casual": {
-        "name_zh": "休闲",
-        "name_en": "Casual",
-        "ios_genre_id": 7009,
+        "name_zh": "休闲（GP）/ 家庭（iOS）",
+        "name_en": "Casual (GP) / Family (iOS)",
+        "ios_genre_id": 7009,  # Apple Family, not Google Play Casual; retain legacy key.
         "gp_category": "GAME_CASUAL",
     },
     "educational": {
