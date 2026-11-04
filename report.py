@@ -7,6 +7,7 @@ from analyzer import generate_full_analysis
 from config import load_settings
 from database import parse_time
 from genres import get_genre_display
+from product_links import product_link
 
 PLATFORM_NAMES = {'gp': 'Google Play', 'ios': 'iOS'}
 CHART_NAMES = {'free': '免费榜', 'paid': '付费榜', 'grossing': '畅销榜'}
@@ -56,7 +57,8 @@ def _rank_blocks(items, kind, limit):
     blocks = []
     for i, item in enumerate(items[:limit], 1):
         app = item['app']
-        lines = [f"{i}. <b>{_text(app['app_name'])}</b> · {PLATFORM_NAMES[item['platform']]}"]
+        country = item['signals'][0][0]['country']
+        lines = [f"{i}. <b>{product_link(app, item['platform'], country)}</b> · {PLATFORM_NAMES[item['platform']]}"]
         if app.get('developer'):
             lines.append(_text(app['developer']))
         signals = sorted(item['signals'], key=lambda s: -s[1]['rank_change'] if kind == 'surges' else s[1]['rank'])
@@ -123,7 +125,8 @@ def generate_report_parts(crawl_time=None, max_len=3900):
                 label = '近期发布' if e['kind'] == 'new_release' else '首次发现，未确认为近期新游'
                 if e['kind'] == 'new_release' and e.get('release_date'):
                     label += ' · ' + str(e['release_date'])[:10]
-                lines.append(f"• {_text(e['app_name'])} · {PLATFORM_NAMES[c['platform']]} · {','.join(sorted(item['countries']))}")
+                country = sorted(item['countries'])[0].lower()
+                lines.append(f"• <b>{product_link(e, c['platform'], country)}</b> · {PLATFORM_NAMES[c['platform']]} · {','.join(sorted(item['countries']))}")
                 lines.append(f"  {_text(c['name'])}｜{_text(label)}")
             if len(ordered) > limit:
                 lines.append(f'另有 {len(ordered)-limit} 款新增发现。')

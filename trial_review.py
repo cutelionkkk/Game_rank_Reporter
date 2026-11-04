@@ -10,6 +10,7 @@ from config import load_settings
 from database import get_rankings_at, parse_time, query
 from publishers import release_age_days
 from report import PLATFORM_NAMES
+from product_links import product_link
 
 
 def text(value, limit=120):
@@ -87,13 +88,14 @@ def company_blocks(analysis, settings):
         ordered = sorted(recent.values(),key=lambda a:(a['age'],a['app']['app_name']))
         for item in ordered[:settings['report_max_items']]:
             app = item['app']
-            lines.append(f"• {text(app['app_name'])}\n  {PLATFORM_NAMES[item['platform']]} · {','.join(sorted(item['countries']))} · {release_day(app['release_date'])}")
+            country = sorted(item['countries'])[0].lower()
+            lines.append(f"• <b>{product_link(app, item['platform'], country)}</b>\n  {PLATFORM_NAMES[item['platform']]} · {','.join(sorted(item['countries']))} · {release_day(app['release_date'])}")
         if len(ordered)>settings['report_max_items']:
             lines.append(f"另有 {len(ordered)-settings['report_max_items']} 个商店条目。")
         if not ordered:
             lines.append('可用目录中未查到可确认的近期首发游戏。')
-        for (_,app_id),e in list(discovered.items())[:3]:
-            lines.append('首次发现（未确认为近期首发）：'+text(e['app_name']))
+        for (platform,app_id),e in list(discovered.items())[:3]:
+            lines.append('首次发现（未确认为近期首发）：'+product_link(e, platform, e['country']))
         if incomplete:
             lines.append(f'{incomplete} 个账号目录暂不完整，继续复查。')
         blocks.append('\n'.join(lines))
@@ -112,7 +114,7 @@ def generate_trial_review(crawl_time):
             lines.append('本轮未取得榜单：'+text(chart.get('message')))
         elif not chart['previous_time']:
             lines.append('暂无可比历史；以下仅为当前排名快照（前 10 名）。')
-            lines.extend(f"#{a['rank']}  {text(a['app_name'])}" for a in chart['current'][:10])
+            lines.extend(f"#{a['rank']}  {product_link(a, scope['platform'], scope['country'])}" for a in chart['current'][:10])
         else:
             start = parse_time(chart['previous_time']).astimezone(ZoneInfo('Asia/Shanghai'))
             end = parse_time(crawl_time).astimezone(ZoneInfo('Asia/Shanghai'))
@@ -125,13 +127,13 @@ def generate_trial_review(crawl_time):
             if not changes['surges']:
                 lines.append(f"暂无达到 ↑{settings['rank_surge_threshold']} 的项目。")
             for app in movers[:settings['report_max_items']]:
-                lines.append(f"• {text(app['app_name'])}  #{app['prev_rank']} → #{app['rank']}（↑{app['rank_change']}）")
+                lines.append(f"• <b>{product_link(app, scope['platform'], scope['country'])}</b>\n  #{app['prev_rank']} → #{app['rank']}（↑{app['rank_change']}）")
             if not movers:
                 lines.append('这段时间未检测到排名上涨。')
             old = get_rankings_at(chart['previous_time'],scope['platform'],chart['db_chart_type'],scope['country'])
             depth = min(max(a['rank'] for a in old),max(a['rank'] for a in chart['current']))
             if changes['new_entries']:
-                lines.append(f'新进可比 Top {depth}：'+ '、'.join(f"{text(a['app_name'],60)} #{a['rank']}" for a in changes['new_entries'][:3]))
+                lines.append(f'新进可比 Top {depth}：'+ '、'.join(f"{product_link(a, scope['platform'], scope['country'],60)} #{a['rank']}" for a in changes['new_entries'][:3]))
             if depth<settings['top_n']:
                 lines.append(f'旧快照仅 Top {depth}，扩大的采集范围不算新上榜。')
         parts.append('\n'.join(lines))

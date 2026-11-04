@@ -11,6 +11,7 @@ from zoneinfo import ZoneInfo
 import requests
 from database import get_db, init_db, utcnow, query
 from monitoring import monitor_lock
+from feishu_card import build_cards
 
 API = 'https://open.feishu.cn/open-apis'
 
@@ -47,7 +48,7 @@ def recipients_from_config(config=None):
 
 def plain_report(parts):
     # Decode source text only after removing our own formatting tags.
-    return '\n\n'.join(unescape(re.sub(r'</?(?:b|i)>', '', part)) for part in parts)
+    return '\n\n'.join(unescape(re.sub(r'</?(?:b|i)>|<a href="[^"]*">|</a>', '', part)) for part in parts)
 
 
 def split_utf8(text, limit=12000):
@@ -82,14 +83,16 @@ class FeishuClient:
             raise RuntimeError(f"飞书应用认证失败（HTTP {r.status_code}，code {d.get('code')}），请核对应用凭证")
         self.token = d['tenant_access_token']
 
-    def send(self, recipient, content, message_uuid):
+    def send(self, recipient, content, message_uuid, msg_type='post'):
+        if msg_type not in ('post', 'interactive'):
+            raise ValueError('不支持的飞书消息类型')
         for attempt in range(3):
             if not self.token:
                 self.authenticate()
             try:
                 r = requests.post(API+'/im/v1/messages',params={'receive_id_type':recipient['type']},
                     headers={'Authorization':'Bearer '+self.token},
-                    json={'receive_id':recipient['id'],'msg_type':'post','content':content,'uuid':message_uuid},timeout=25)
+                    json={'receive_id':recipient['id'],'msg_type':msg_type,'content':content,'uuid':message_uuid},timeout=25)
                 d = r.json()
             except (requests.RequestException,ValueError):
                 if attempt < 2:
@@ -118,6 +121,8 @@ def _init_outbox(trial=False):
             part INTEGER NOT NULL, content TEXT NOT NULL, message_uuid TEXT NOT NULL,
             sent_at TEXT, message_id TEXT, error TEXT,
             PRIMARY KEY({field},app_id,recipient_type,recipient_id,part))''')
+        if 'msg_type' not in {r['name'] for r in conn.execute(f'PRAGMA table_info({table})')}:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN msg_type TEXT NOT NULL DEFAULT 'post'")
     conn.close()
 
 
@@ -142,9 +147,7 @@ def _send_report(parts, config, day, client, trial_id=None):
     table = 'feishu_trial_outbox' if trial_id else 'feishu_outbox'
     field = 'delivery_key' if trial_id else 'delivery_date'
     delivery_key = day + ':' + trial_id if trial_id else day
-    chunks = split_utf8(plain_report(parts))
-    if not chunks:
-        raise ValueError('日报内容为空，未发送')
+    cards = build_cards(parts, day, trial=bool(trial_id))
     with monitor_lock():
         _init_outbox(trial=bool(trial_id))
         with get_db() as conn:
@@ -156,14 +159,13 @@ def _send_report(parts, config, day, client, trial_id=None):
                     (delivery_key,client.app_id,recipient['type'],recipient['id'])).fetchone()
                 if existing:
                     continue
-                for index,chunk in enumerate(chunks):
-                    title = ('游戏雷达试推 · 美国免费榜' if trial_id else '游戏监测日报') + f' · {day}' + (f'（{index+1}/{len(chunks)}）' if len(chunks)>1 else '')
-                    content = json.dumps({'zh_cn':{'title':title,'content':[[{'tag':'text','text':line or ' '}] for line in chunk.split('\n')]}},ensure_ascii=False)
+                for index,card in enumerate(cards):
+                    content = json.dumps(card,ensure_ascii=False)
                     seed = json.dumps([delivery_key,client.app_id,recipient['type'],recipient['id'],index],ensure_ascii=False)
                     message_uuid = hashlib.sha256(seed.encode()).hexdigest()[:40]
                     conn.execute(f'''INSERT INTO {table}
-                        ({field},app_id,recipient_type,recipient_id,part,content,message_uuid)
-                        VALUES (?,?,?,?,?,?,?)''',(delivery_key,client.app_id,recipient['type'],recipient['id'],index,content,message_uuid))
+                        ({field},app_id,recipient_type,recipient_id,part,content,message_uuid,msg_type)
+                        VALUES (?,?,?,?,?,?,?,?)''',(delivery_key,client.app_id,recipient['type'],recipient['id'],index,content,message_uuid,'interactive'))
         conn.close()
         sent, skipped, failures = 0, 0, []
         for number,recipient in enumerate(recipients,1):
@@ -174,7 +176,7 @@ def _send_report(parts, config, day, client, trial_id=None):
                 if row['sent_at']:
                     skipped += 1;continue
                 try:
-                    message_id = client.send(recipient,row['content'],row['message_uuid'])
+                    message_id = client.send(recipient,row['content'],row['message_uuid'],row['msg_type'])
                     with get_db() as conn:
                         conn.execute(f'UPDATE {table} SET sent_at=?,message_id=?,error=NULL WHERE message_uuid=?',
                                      (utcnow(),message_id,row['message_uuid']))
