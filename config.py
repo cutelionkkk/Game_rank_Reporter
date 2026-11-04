@@ -174,8 +174,8 @@ def validate_monitor_settings(payload):
         if key in scopes:
             raise ValueError('请移除重复的榜单版块')
         scopes.add(key)
-    if not isinstance(s['companies'], list) or len(s['companies']) > 50:
-        raise ValueError('最多关注 50 个开发者账号')
+    if not isinstance(s['companies'], list) or len(s['companies']) > 100:
+        raise ValueError('最多关注 100 个开发者账号')
     ids, accounts = set(), set()
     for company in s['companies']:
         if not isinstance(company, dict):
@@ -185,6 +185,16 @@ def validate_monitor_settings(payload):
             if not isinstance(value, str) or not value.strip() or len(value) > 200:
                 raise ValueError('请填写公司名称和有效的开发者 ID')
             company[key] = value.strip()
+        aliases = company.get('aliases', [])
+        if not isinstance(aliases, list) or len(aliases) > 20 or any(not isinstance(a, str) or not a.strip() or len(a) > 200 for a in aliases):
+            raise ValueError('原账号名称格式无效')
+        group = company.get('group', '')
+        if not isinstance(group, str) or len(group) > 100:
+            raise ValueError('公司分组名称最多 100 字')
+        if group.strip():
+            company['group'] = group.strip()
+        else:
+            company.pop('group', None)
         if company['id'] in ids:
             raise ValueError('公司配置 ID 重复')
         ids.add(company['id'])

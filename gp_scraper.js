@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 // Store adapters. JSON only on stdout; argv is passed without a shell.
 const fs = require('node:fs');
+const {decodeDeveloperId, developerApps} = require('./gp_catalog.cjs');
 
 async function mapLimited(items, fn) {
   const results = new Array(items.length);
@@ -29,22 +30,21 @@ async function main() {
     const apps = await gplay.search({...opts, term: value, fullDetail: false});
     const detailed = await mapLimited(apps, detail);
     result = detailed.filter(a => (a.genreId || '').startsWith('GAME'))
-      .map(a => ({developer_id: a.developerId, name: a.developer, example: a.title}));
+      .map(a => ({developer_id: decodeDeveloperId(a.developerId), name: a.developer, example: a.title}));
   } else if (mode === 'developer') {
     const known = JSON.parse(fs.readFileSync(0, 'utf8') || '{}');
-    const apps = await gplay.developer({...opts, devId: value, fullDetail: false});
-    if (!apps.length) throw new Error('No products returned; check developer ID and country');
+    const {apps, first, warning} = await developerApps(gplay, opts, value);
     const catalog = await mapLimited(apps, async app => {
       if (Object.hasOwn(known, app.appId)) return {...known[app.appId], app_name: app.title};
-      const a = await detail(app);
+      const a = app.appId === first.appId ? first : await detail(app);
       if (!a.genreId || !a.appId || !a.title) throw new Error('Incomplete app details');
       return {app_id: a.appId, app_name: a.title, developer: a.developer,
         is_game: a.genreId.startsWith('GAME'), category: a.genre,
         // 'updated' is not an original release date.
         release_date: a.released || null, url: a.url, icon_url: a.icon};
     });
-    result = {apps: catalog, partial: apps.length >= num,
-      message: apps.length >= num ? 'Google Play 已达到 200 款抓取上限，目录可能不完整' : ''};
+    result = {apps: catalog, partial: Boolean(warning) || apps.length >= num,
+      message: warning || (apps.length >= num ? 'Google Play 已达到 200 款抓取上限，目录可能不完整' : '')};
   } else {
     const collection = {free: gplay.collection.TOP_FREE, paid: gplay.collection.TOP_PAID,
                         grossing: gplay.collection.GROSSING}[mode];

@@ -142,7 +142,7 @@ def send_daily_report(parts, config=None, day=None, client=None):
                     continue
                 for index,chunk in enumerate(chunks):
                     title = f'游戏监测日报 · {day}' + (f'（{index+1}/{len(chunks)}）' if len(chunks)>1 else '')
-                    content = json.dumps({'zh_cn':{'title':title,'content':[[{'tag':'text','text':chunk}]]}},ensure_ascii=False)
+                    content = json.dumps({'zh_cn':{'title':title,'content':[[{'tag':'text','text':line or ' '}] for line in chunk.split('\n')]}},ensure_ascii=False)
                     seed = json.dumps([day,client.app_id,recipient['type'],recipient['id'],index],ensure_ascii=False)
                     message_uuid = hashlib.sha256(seed.encode()).hexdigest()[:40]
                     conn.execute('''INSERT INTO feishu_outbox

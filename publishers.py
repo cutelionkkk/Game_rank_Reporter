@@ -2,7 +2,7 @@
 import json
 from datetime import datetime, timezone
 from database import get_db, query, parse_time
-from store_api import fetch_publisher
+from store_api import fetch_publisher, PublisherUnavailable
 
 
 def release_age_days(value, at):
@@ -81,6 +81,13 @@ def crawl_companies(crawl_time, settings):
                 store_catalog(crawl_time, company, country, catalog, settings['new_entry_days'])
                 total += 1
                 print(f"✅ {company['name']} · {country.upper()}: {len(catalog['apps'])} 款产品")
+            except PublisherUnavailable as exc:
+                with get_db() as conn:
+                    conn.execute('''INSERT OR REPLACE INTO publisher_snapshots
+                        (crawl_time,platform,developer_id,country,status,count,message)
+                        VALUES (?,?,?,?,'unavailable',0,?)''', (crawl_time,p,dev,country,str(exc)))
+                conn.close()
+                print(f"ℹ️ {company['name']} · {country.upper()}: {exc}")
             except Exception as exc:
                 message = str(exc)[:600]
                 with get_db() as conn:

@@ -10,6 +10,10 @@ from urllib3.util.retry import Retry
 ROOT = os.path.dirname(os.path.abspath(__file__))
 
 
+class PublisherUnavailable(RuntimeError):
+    """A store account exists in the watchlist but has no accessible catalog."""
+
+
 def fetch_json(url, params=None):
     with requests.Session() as session:
         session.mount('https://', HTTPAdapter(max_retries=Retry(
@@ -34,6 +38,8 @@ def run_gp(mode, country, value, limit=100, known=None):
     except subprocess.TimeoutExpired as exc:
         raise RuntimeError('Google Play 请求超时，本轮未写入快照') from exc
     if result.returncode:
+        if mode == 'developer' and result.stderr.strip() == 'Developer unavailable (404)':
+            raise PublisherUnavailable('商店账号页面暂不可访问（404），保留关注并每日复查')
         raise RuntimeError('Google Play: ' + result.stderr.strip()[-600:])
     return json.loads(result.stdout)
 
@@ -99,6 +105,8 @@ def fetch_publisher(company, country, known=None):
                          is_game=ios_game(a), category=a.get('primaryGenreName', ''),
                          url=a.get('trackViewUrl', ''), icon_url=a.get('artworkUrl100', '')))
     if not apps:
+        if any(a.get('wrapperType') == 'artist' and str(a.get('artistId')) == dev_id for a in results):
+            raise PublisherUnavailable('商店已确认账号，但当前地区未返回产品；保留关注并每日复查')
         raise ValueError('未取得该开发者的产品；请核对开发者 ID 和国家，原有基线已保留')
     return dict(apps=apps, partial=len(apps) >= 199,
                 message='App Store 单个开发者最多返回约 200 款产品，可能不完整' if len(apps) >= 199 else '')
