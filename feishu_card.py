@@ -1,6 +1,7 @@
 """Readable Feishu JSON 2.0 cards from the report's small HTML vocabulary."""
 import json
 import re
+from html import escape
 from html.parser import HTMLParser
 from urllib.parse import urlsplit
 
@@ -28,7 +29,9 @@ class ReportMarkdown(HTMLParser):
             valid = parsed.scheme == 'https' and parsed.hostname in ('apps.apple.com', 'play.google.com')
             self.links.append(url if valid else '')
             if valid:
-                self.parts.append('[')
+                # Feishu renders Markdown backslash escapes literally in link labels.
+                # Its documented link tag keeps punctuation in store names intact.
+                self.parts.append('<link url="' + escape(url, quote=True) + '">')
 
     def handle_endtag(self, tag):
         if tag in ('b', 'i'):
@@ -36,10 +39,10 @@ class ReportMarkdown(HTMLParser):
         elif tag == 'a' and self.links:
             url = self.links.pop()
             if url:
-                self.parts.append('](' + url.replace('(', '%28').replace(')', '%29') + ')')
+                self.parts.append('</link>')
 
     def handle_data(self, data):
-        self.parts.append(markdown_text(data))
+        self.parts.append(escape(data, quote=False) if self.links else markdown_text(data))
 
 
 def html_to_markdown(value):

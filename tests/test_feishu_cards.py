@@ -17,8 +17,9 @@ class CardCase(BaseCase):
         name = 'A [Puzzle] & <b>Game</b> *!'
         link = product_link(dict(app_id='123456', app_name=name), 'ios', 'jp')
         markdown = html_to_markdown(link)
-        self.assertIn('(https://apps.apple.com/jp/app/id123456)', markdown)
-        self.assertIn(r'\[Puzzle\]', markdown)
+        self.assertIn('<link url="https://apps.apple.com/jp/app/id123456">', markdown)
+        self.assertIn('[Puzzle]', markdown)
+        self.assertNotIn(r'\!', markdown)
         self.assertIn('&lt;b&gt;Game&lt;/b&gt;', markdown)
         self.assertNotIn('**Game**', markdown)
         self.assertEqual(product_url('gp', 'com.example.game', 'us'),
@@ -42,7 +43,7 @@ class CardCase(BaseCase):
             self.assertEqual(sorted(names),sorted(linked))
             card=json.dumps(build_cards(parts,'2026-11-02'),ensure_ascii=False)
             self.assertIn('https://apps.apple.com/us/app/id202',card)
-            self.assertIn('id=com.test.c&gl=us',card)
+            self.assertIn('id=com.test.c&amp;gl=us',card)
 
     def test_snapshot_names_also_linked_without_history(self):
         self.configure(chart_list=[scope(genre='all')])
@@ -55,7 +56,7 @@ class CardCase(BaseCase):
         cards=build_cards(parts,'2026-11-04',trial=True)
         self.assertGreater(len(cards),1)
         all_markdown='\n'.join(e.get('content','') for c in cards for e in c['body']['elements'])
-        urls=re.findall(r'\]\((https://apps.apple.com/[^)]+)\)',all_markdown)
+        urls=re.findall(r'<link url="(https://apps.apple.com/[^"]+)">',all_markdown)
         self.assertEqual(len(urls),120)
         self.assertEqual(len(set(urls)),120)
         for card in cards:
