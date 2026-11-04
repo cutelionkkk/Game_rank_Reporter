@@ -1,77 +1,61 @@
 #!/usr/bin/env node
-/**
- * Google Play Top Charts Scraper
- * Uses Node.js google-play-scraper which has working batchexecute API
- *
- * Usage: node gp_scraper.js <chart_type> [country] [num] [category]
- * chart_type: free | paid | grossing
- * category: GAME (default) | GAME_CASUAL | GAME_PUZZLE | etc.
- * Output: JSON array to stdout
- */
+// Store adapters. JSON only on stdout; argv is passed without a shell.
+const fs = require('node:fs');
 
-const gplay = require('google-play-scraper').default;
-
-const chartMap = {
-  'free': gplay.collection.TOP_FREE,
-  'paid': gplay.collection.TOP_PAID,
-  'grossing': gplay.collection.GROSSING,
-};
-
-async function main() {
-  const chartType = process.argv[2] || 'free';
-  const country = process.argv[3] || 'us';
-  const num = parseInt(process.argv[4]) || 100;
-  const categoryArg = process.argv[5] || 'GAME';
-
-  const collection = chartMap[chartType];
-  if (!collection) {
-    process.stderr.write(`Unknown chart type: ${chartType}. Use: free, paid, grossing\n`);
-    process.exit(1);
-  }
-
-  // Resolve category
-  const category = gplay.category[categoryArg];
-  if (!category) {
-    process.stderr.write(`Unknown category: ${categoryArg}\n`);
-    process.stderr.write(`Available: ${Object.keys(gplay.category).filter(k => k.startsWith('GAME')).join(', ')}\n`);
-    process.exit(1);
-  }
-
-  try {
-    const apps = await gplay.list({
-      collection: collection,
-      category: category,
-      num: num,
-      country: country,
-      lang: 'en',
-      fullDetail: false,
-    });
-
-    const results = apps.map((app, index) => ({
-      rank: index + 1,
-      app_id: app.appId,
-      app_name: app.title,
-      developer: app.developer || '',
-      category: app.genre || app.genreId || '',
-      rating: app.scoreText ? parseFloat(app.scoreText) : (app.score || null),
-      rating_count: app.ratings || null,
-      price: app.priceText === 'Free' ? 0 : (app.price || 0),
-      icon_url: app.icon || '',
-      extra: {
-        installs: app.installs || '',
-        free: app.free !== false,
-        genreId: app.genreId || '',
-        url: app.url || '',
-        description_short: (app.summary || '').slice(0, 200),
-      },
-    }));
-
-    // Output ONLY JSON to stdout, everything else to stderr
-    process.stdout.write(JSON.stringify(results));
-  } catch (err) {
-    process.stderr.write(`Error scraping ${chartType} (${categoryArg}): ${err.message}\n`);
-    process.exit(1);
-  }
+async function mapLimited(items, fn) {
+  const results = new Array(items.length);
+  let cursor = 0;
+  await Promise.all(Array.from({length: Math.min(4, items.length)}, async () => {
+    while (cursor < items.length) {
+      const index = cursor++;
+      results[index] = await fn(items[index]);
+    }
+  }));
+  return results;
 }
 
-main();
+async function main() {
+  const {default: gplay} = await import('google-play-scraper');
+  const [mode = 'free', country = 'us', count = '100', value = 'GAME'] = process.argv.slice(2);
+  const num = Number(count);
+  if (!/^[a-z]{2}$/.test(country) || !Number.isInteger(num) || num < 1 || num > 200) {
+    throw new Error('Invalid country or limit');
+  }
+  const opts = {country, lang: 'en', requestOptions: {timeout: 25000}, num};
+  const detail = app => gplay.app({...opts, appId: app.appId});
+  let result;
+  if (mode === 'search') {
+    // Full details resolve actual account IDs, not the search result's display name.
+    const apps = await gplay.search({...opts, term: value, fullDetail: false});
+    const detailed = await mapLimited(apps, detail);
+    result = detailed.filter(a => (a.genreId || '').startsWith('GAME'))
+      .map(a => ({developer_id: a.developerId, name: a.developer, example: a.title}));
+  } else if (mode === 'developer') {
+    const known = JSON.parse(fs.readFileSync(0, 'utf8') || '{}');
+    const apps = await gplay.developer({...opts, devId: value, fullDetail: false});
+    if (!apps.length) throw new Error('No products returned; check developer ID and country');
+    const catalog = await mapLimited(apps, async app => {
+      if (Object.hasOwn(known, app.appId)) return {...known[app.appId], app_name: app.title};
+      const a = await detail(app);
+      if (!a.genreId || !a.appId || !a.title) throw new Error('Incomplete app details');
+      return {app_id: a.appId, app_name: a.title, developer: a.developer,
+        is_game: a.genreId.startsWith('GAME'), category: a.genre,
+        // 'updated' is not an original release date.
+        release_date: a.released || null, url: a.url, icon_url: a.icon};
+    });
+    result = {apps: catalog, partial: apps.length >= num,
+      message: apps.length >= num ? 'Google Play 已达到 200 款抓取上限，目录可能不完整' : ''};
+  } else {
+    const collection = {free: gplay.collection.TOP_FREE, paid: gplay.collection.TOP_PAID,
+                        grossing: gplay.collection.GROSSING}[mode];
+    const category = gplay.category[value];
+    if (!collection || !category || !value.startsWith('GAME')) throw new Error('Invalid game chart');
+    const apps = await gplay.list({...opts, collection, category, fullDetail: false});
+    result = apps.map((a, i) => ({rank: i + 1, app_id: a.appId, app_name: a.title,
+      developer: a.developer || '', category: a.genre || value, rating: a.score || null,
+      rating_count: a.ratings || null, price: a.price || 0, icon_url: a.icon || '',
+      extra_json: JSON.stringify({url: a.url || '', genreId: a.genreId || value})}));
+  }
+  process.stdout.write(JSON.stringify(result));
+}
+main().catch(error => {process.stderr.write(error.message + '\n'); process.exitCode = 1;});

@@ -123,7 +123,8 @@ def _rule_based_gameplay(app_name: str) -> str | None:
 def _load_cache() -> dict:
     if os.path.exists(CACHE_FILE):
         try:
-            return json.load(open(CACHE_FILE, 'r', encoding='utf-8'))
+            with open(CACHE_FILE, 'r', encoding='utf-8') as cache:
+                return json.load(cache)
         except Exception:
             return {}
     return {}

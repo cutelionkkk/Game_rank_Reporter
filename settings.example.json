@@ -1,15 +1,22 @@
 {
   "country": "us",
   "top_n": 100,
-  "charts": ["free", "paid", "grossing"],
-  "platforms": ["ios", "gp"],
+  "charts": [
+    "free",
+    "paid",
+    "grossing"
+  ],
+  "platforms": [
+    "ios",
+    "gp"
+  ],
   "rank_surge_threshold": 15,
   "new_entry_days": 30,
   "consecutive_rise_days": 3,
   "category_trend_window": 7,
   "report_max_items": 10,
   "report_language": "zh",
-  "notify_channels": ["discord"],
+  "notify_channels": [],
   "channel_config": {
     "discord": {
       "webhook_url": "https://discord.com/api/webhooks/YOUR_WEBHOOK_ID/YOUR_WEBHOOK_TOKEN",
@@ -34,5 +41,53 @@
     "wechat": {
       "webhook_url": "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
     }
-  }
+  },
+  "ranking_enabled": true,
+  "company_enabled": true,
+  "comparison_hours": 24,
+  "companies": [],
+  "chart_list": [
+    {
+      "platform": "ios",
+      "country": "us",
+      "chart_type": "free",
+      "genre": "all",
+      "enabled": true
+    },
+    {
+      "platform": "ios",
+      "country": "us",
+      "chart_type": "paid",
+      "genre": "all",
+      "enabled": true
+    },
+    {
+      "platform": "ios",
+      "country": "us",
+      "chart_type": "grossing",
+      "genre": "all",
+      "enabled": true
+    },
+    {
+      "platform": "gp",
+      "country": "us",
+      "chart_type": "free",
+      "genre": "all",
+      "enabled": true
+    },
+    {
+      "platform": "gp",
+      "country": "us",
+      "chart_type": "paid",
+      "genre": "all",
+      "enabled": true
+    },
+    {
+      "platform": "gp",
+      "country": "us",
+      "chart_type": "grossing",
+      "genre": "all",
+      "enabled": true
+    }
+  ]
 }

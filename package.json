@@ -1,0 +1,8 @@
+{
+  "name": "game-rank-reporter",
+  "version": "2.0.0",
+  "private": true,
+  "description": "Google Play adapters for Game Rank Reporter",
+  "engines": {"node": ">=22"},
+  "dependencies": {"google-play-scraper": "10.1.4"}
+}

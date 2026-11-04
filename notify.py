@@ -169,9 +169,19 @@ def send_feishu(report, config):
     resp = requests.post(webhook_url, json=payload, headers=headers, timeout=15)
     result = resp.json() if resp.headers.get('content-type', '').startswith('application/json') else {}
 
-    if result.get('code', -1) == 0 or resp.status_code == 200:
+    if result.get('code', -1) == 0 and resp.status_code == 200:
         return True, "Sent"
-    return False, f"Feishu error: {resp.status_code} {resp.text[:200]}"
+    return False, f"Feishu error: HTTP {resp.status_code}, code {result.get('code')}"
+
+
+def send_feishu_bot(report, config):
+    """Application bot: consolidate sections into one daily private report."""
+    from feishu_push import send_daily_report
+    parts = [report] if isinstance(report, str) else report
+    result = send_daily_report(parts, config)
+    if result['failures']:
+        return False, '; '.join(result['failures'])
+    return True, f"已发送 {result['sent']} 条，已送达跳过 {result['skipped']} 条"
 
 
 def send_dingtalk(report, config):
@@ -243,6 +253,7 @@ SENDERS = {
     "telegram": send_telegram,
     "slack": send_slack,
     "feishu": send_feishu,
+    "feishu_bot": send_feishu_bot,
     "dingtalk": send_dingtalk,
     "wechat": send_wechat,
 }
@@ -252,6 +263,7 @@ CHANNEL_NAMES = {
     "telegram": "Telegram",
     "slack": "Slack",
     "feishu": "飞书 (Feishu)",
+    "feishu_bot": "飞书私聊日报",
     "dingtalk": "钉钉 (DingTalk)",
     "wechat": "企业微信 (WeCom)",
 }
@@ -291,7 +303,7 @@ def send_report(report, channels=None):
 
 
 def send_report_parts(parts: list, channels=None):
-    """Send each chart as a separate message to all configured channels"""
+    """Send sections; the application bot combines them into one daily report."""
     settings = load_settings()
     active_channels = channels or settings.get('notify_channels', [])
     channel_config = settings.get('channel_config', {})
@@ -313,6 +325,10 @@ def send_report_parts(parts: list, channels=None):
         last_err = None
 
         try:
+            if ch == 'feishu_bot':
+                results[ch] = sender(parts, conf)
+                print(f"  {ch_name}: {results[ch][1]}")
+                continue
             for part in parts:
                 ok, msg = sender(part, conf)
                 if ok:

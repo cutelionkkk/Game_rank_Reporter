@@ -7,7 +7,7 @@
 <p align="center">
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-blue.svg?style=for-the-badge" alt="MIT License"></a>
   <a href="https://www.python.org/"><img src="https://img.shields.io/badge/Python-3.10+-green.svg?style=for-the-badge&logo=python&logoColor=white" alt="Python 3.10+"></a>
-  <a href="https://nodejs.org/"><img src="https://img.shields.io/badge/Node.js-18+-green.svg?style=for-the-badge&logo=node.js&logoColor=white" alt="Node.js 18+"></a>
+  <a href="https://nodejs.org/"><img src="https://img.shields.io/badge/Node.js-22+-green.svg?style=for-the-badge&logo=node.js&logoColor=white" alt="Node.js 22+"></a>
   <a href="https://github.com/cutelionkkk/Game_rank_Reporter/stargazers"><img src="https://img.shields.io/github/stars/cutelionkkk/Game_rank_Reporter?style=for-the-badge" alt="GitHub Stars"></a>
 </p>
 
@@ -20,6 +20,14 @@
 </p>
 
 ---
+
+## Local dashboard and selective monitoring
+
+Run `python run.py --serve --open-browser` after installing Python requirements and running `npm ci` (Node.js 22+). The local dashboard at `http://127.0.0.1:8765` selects stores, countries, charts and genres, a surge threshold and comparison window. Search for developer accounts or add exact IDs to monitor their catalogs independently of chart membership. First observations establish a silent baseline; later discoveries distinguish recent releases from older or unknown-date games.
+
+The dashboard does not send notifications or schedule jobs. Existing daily jobs still call `run.py`; `--dry-run` collects and reports without notifications. Legacy SQLite data is backed up and migrated with country isolation. JSON schema v2 keys include country, e.g. `ios_jp_free:puzzle`. See [monitoring guide](docs/MONITORING.md) for migration details, limits and tests.
+
+
 
 ## Why Game Rank Reporter?
 
@@ -100,10 +108,10 @@ The agent will: clone the repo, install dependencies, run the first crawl, and c
 
 ```bash
 # Python
-pip install google-play-scraper requests
+pip install -r requirements.txt
 
 # Node.js (required for Google Play)
-npm install -g google-play-scraper
+npm ci
 ```
 
 ### 2. Configure notifications (optional)
@@ -190,8 +198,8 @@ Key settings in `settings.json`:
 
 - [x] Per-chart separate messages ✅
 - [x] Game genre classification (rules + AI enrichment) ✅
-- [ ] Multi-region tracking (US + JP + KR simultaneously)
-- [ ] Web Dashboard (optional)
+- [x] Multi-region tracking (US + JP + KR simultaneously)
+- [x] Local Web Dashboard and developer watchlists
 - [ ] Game detail tracking (ratings, review count, downloads)
 - [ ] Weekly / monthly summary reports
 - [ ] Custom watchlist (track specific games)
@@ -201,8 +209,12 @@ Key settings in `settings.json`:
 
 ## Credits
 
-[google-play-scraper](https://github.com/nicolewhite/google-play-scraper) · [Apple RSS Feed](https://rss.applemarketingtools.com) · [SQLite](https://sqlite.org)
+[google-play-scraper](https://github.com/facundoolano/google-play-scraper) · [Apple RSS Feed](https://rss.applemarketingtools.com) · [SQLite](https://sqlite.org)
 
 ## License
 
 [MIT](LICENSE)
+
+## Daily Feishu private reports
+
+The GitHub Actions workflow runs daily at 09:00 Asia/Shanghai and sends a combined report to each configured recipient. Ranking history and the delivery ledger are encrypted before artifact upload. Use the local dashboard’s cloud-sync button to update monitoring preferences. See [setup, recovery and scheduling limitations](docs/FEISHU_CLOUD.md).

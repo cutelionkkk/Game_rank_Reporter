@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>游戏雷达 · Game Rank Reporter</title>
+<link rel="stylesheet" href="/style.css"><script src="/app.js" defer></script>
+</head>
+<body>
+<header class="topbar"><a class="brand" href="/" aria-label="游戏雷达首页"><span class="mark">◎</span><span>游戏雷达<small>GAME RANK REPORTER</small></span></a><div class="local"><i></i> 本地监测工作台</div></header>
+<main>
+<section class="hero"><div><div class="eyebrow">DISCOVER WHAT'S NEXT</div><h1>更早发现，下一个热门游戏。</h1><p>跟踪榜单的快速爬升，关注游戏公司的新动向。</p></div><button id="run" class="primary">▶ 立即监测</button></section>
+<div id="notice" class="notice" role="status" aria-live="polite" hidden></div>
+<div class="builder-bottom"><span id="cloud-destination" class="hint">每天推送设置</span><button id="cloud-sync" class="secondary">同步每天推送</button></div>
+<nav class="tabs" aria-label="工作台导航"><button class="active" data-tab="results" aria-selected="true">监测发现</button><button data-tab="rankings" aria-selected="false">榜单版块 <span id="chart-count">0</span></button><button data-tab="companies" aria-selected="false">关注公司 <span id="company-count">0</span></button><div id="save-state">配置已保存</div><button id="save" class="save">保存设置</button></nav>
+<section id="results" class="panel">
+<div class="metrics"><div><span>快速爬升信号</span><strong id="metric-surges">—</strong><small>所选版块内达到阈值的项目</small></div><div><span>公司新增发现</span><strong id="metric-new">—</strong><small>开发者目录中新发现的游戏</small></div><div><span>本轮成功采集</span><strong id="metric-scopes">—</strong><small>榜单与公司地区目录</small></div><div><span>最近一次监测</span><strong class="date" id="metric-time">尚未运行</strong><small id="job-state">选择监测范围后即可开始</small></div></div>
+<div class="section-title"><div><h2>本轮发现</h2><p id="result-description">新关注的版块和公司会先建立历史基线。</p></div><a href="/api/export" download="game-monitor-analysis.json" class="text-link">导出完整结果 ↗</a></div>
+<div class="result-filters"><button class="active" data-result="all">全部</button><button data-result="surges">快速爬升</button><button data-result="companies">公司新游</button><button data-result="status">采集状态</button></div>
+<div id="findings"></div>
+</section>
+<section id="rankings" class="panel" hidden>
+<div class="section-title"><div><h2>选择你关心的榜单版块</h2><p>每个商店、国家和品类单独对比，支持多选组合。</p></div><label class="switch"><input type="checkbox" id="ranking-enabled"> 启用榜单监测</label></div>
+<div class="card controls"><div class="field-grid"><label>排名爬升阈值 <span class="input-unit"><input id="threshold" type="number" min="1" max="199">名及以上</span></label><label>对比窗口<select id="window"><option value="24">过去 24 小时</option><option value="72">过去 72 小时</option><option value="168">过去 7 天</option><option value="0">上次成功采集</option></select></label><label>采集范围<select id="top-n"><option value="50">Top 50</option><option value="100">Top 100</option><option value="200">Top 200</option></select></label></div><p class="hint">需要先积累历史。按最接近窗口起点的成功快照对比，容许起点后 1 小时的调度误差，并展示实际间隔；过旧的快照不参与快速爬升判断。</p></div>
+<div class="card builder"><h3>添加监测版块</h3><div class="builder-grid"><fieldset><legend>01 · 商店</legend><div id="platform-options" class="choices"></div></fieldset><fieldset><legend>02 · 国家 / 地区</legend><div id="country-options" class="choices scroll-choices"></div><label class="compact-label">其他地区代码<input id="custom-country" placeholder="例如 nl, se" maxlength="50"></label></fieldset><fieldset><legend>03 · 榜单类型</legend><div id="chart-options" class="choices"></div></fieldset><fieldset><legend>04 · 游戏品类</legend><div id="genre-options" class="choices scroll-choices"></div></fieldset></div><div class="builder-bottom"><span class="hint">仅添加商店支持的品类。来源不可用时会显示采集失败。</span><button id="add-scopes" class="secondary">＋ 添加所选组合</button></div></div>
+<div class="section-title small"><h3>已选版块 <span id="selected-count"></span></h3><button id="clear-scopes" class="text-button danger">移除全部版块</button></div><div id="scope-list" class="card table-wrap"></div>
+</section>
+<section id="companies" class="panel" hidden>
+<div class="section-title"><div><h2>关注公司的新游戏</h2><p>直接检查开发者产品目录，覆盖尚未进入排行榜的游戏。</p></div><label class="switch"><input type="checkbox" id="company-enabled"> 启用公司监测</label></div>
+<div class="card controls"><div class="field-grid"><label>近期发布的判断范围<span class="input-unit"><input id="new-days" type="number" min="1" max="365">天内首次发布</span></label><div class="explainer"><b>先建基线，再看新增</b><p>第一次记录已有产品；之后新增且首发日期在范围内的标为“近期发布”。旧游戏或日期未知的标为“首次发现”。</p></div></div></div>
+<div class="card"><h3>搜索并选择开发者账号</h3><form id="search-form" class="search-row"><label>商店<select id="search-platform"><option value="ios">App Store</option><option value="gp">Google Play</option></select></label><label>国家 / 地区<select id="search-country"></select></label><label class="grow">公司名或旗下游戏<input id="search-term" placeholder="例如 Supercell、Clash of Clans" minlength="2" maxlength="100" required></label><button type="submit" id="search-button" class="secondary">搜索公司</button></form><p class="hint">搜索结果是候选账号，请结合产品名确认。不同发行账号可分别添加，同一公司可使用相同关注名称。</p><div id="search-results" aria-live="polite"></div><details><summary>已有开发者 ID？手动添加</summary><form id="manual-form" class="search-row"><label>商店<select id="manual-platform"><option value="ios">App Store</option><option value="gp">Google Play</option></select></label><label>公司名称<input id="manual-name" required maxlength="200" placeholder="关注名称"></label><label class="grow">开发者 ID<input id="manual-id" required maxlength="200" placeholder="开发者页面的 id 参数"></label><label>国家代码<input id="manual-countries" required value="us" placeholder="us, jp" maxlength="50"></label><button class="secondary" type="submit">添加关注</button></form></details></div>
+<div class="section-title small"><h3>我的关注 <span id="watch-count"></span></h3><span class="hint">可暂停单个账号；恢复后继续使用原有历史。</span></div><div id="watch-list"></div>
+</section>
+<footer><span>数据来自商店公开榜单及开发者目录 · 仅在运行采集时更新</span><span>网页监测不发送通知</span></footer>
+</main>
+</body></html>
