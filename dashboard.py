@@ -73,7 +73,9 @@ class Handler(BaseHTTPRequestHandler):
         path = urlsplit(self.path).path
         try:
             if path == '/api/bootstrap':
+                from cloud_sync import repository_name
                 self.respond(dict(settings=monitor_settings(), token=self.server.token,
+                                  cloud_repository=repository_name(),
                                   options=dict(countries=COUNTRIES,genres=GENRES,charts=CHART_TYPES,platforms=PLATFORMS)))
             elif path in ('/api/state','/api/export'):
                 from analyzer import generate_full_analysis
@@ -106,14 +108,19 @@ class Handler(BaseHTTPRequestHandler):
                 raise ValueError('请求体为空或过大')
             body = json.loads(self.rfile.read(length))
             path = urlsplit(self.path).path
-            if path == '/api/settings':
+            if path in ('/api/settings', '/api/cloud-sync'):
                 if not self.server.job_lock.acquire(blocking=False):
                     self.respond({'error':'监测运行中，完成后再保存设置'},409)
                     return
                 try:
                     from monitoring import monitor_lock
                     with monitor_lock():
-                        self.respond(dict(settings=save_monitor_settings(body)))
+                        saved = save_monitor_settings(body)
+                        response = dict(settings=saved)
+                        if path == '/api/cloud-sync':
+                            from cloud_sync import sync_settings
+                            response['repository'] = sync_settings()
+                        self.respond(response)
                 finally:
                     self.server.job_lock.release()
             elif path == '/api/search':

@@ -35,6 +35,8 @@ python run.py --serve --open-browser
 
 打开 `http://127.0.0.1:8765`，在“榜单版块”和“关注公司”中保存选择，再点“立即监测”。首次采集建立基线。网页不会发送通知；已有每日任务继续运行 `run.py` 即可。macOS 可双击 `启动游戏雷达.command`。
 
+每天北京时间 **09:00** 由 GitHub Actions 运行、分别私聊发给指定同事，见 **[飞书云端日报配置](docs/FEISHU_CLOUD.md)**。本地网页点“同步每天推送”即可更新云端监测范围。
+
 完整说明、来源限制、旧数据库迁移和 JSON 格式变更见 **[选择性监测使用说明](docs/MONITORING.md)**。
 
 ![本地榜单选择页面](docs/dashboard-preview.jpg)
@@ -106,7 +108,7 @@ Game Rank Reporter 按保存的范围采集榜单和公司目录，对比历史�
 | 🟣 **Discord** | Webhook | Markdown | ⭐ 最简单 |
 | 🔵 **Telegram** | Bot API | HTML | ⭐⭐ |
 | 🟠 **Slack** | Incoming Webhook | mrkdwn | ⭐ |
-| 🔷 **飞书 (Feishu)** | 自定义机器人 | 交互式卡片 | ⭐⭐ |
+| 🔷 **飞书 (Feishu)** | 群机器人 / 应用机器人私聊 | 卡片 / 合并日报 | ⭐⭐ |
 | 🔷 **钉钉 (DingTalk)** | 自定义机器人 + 加签 | Markdown | ⭐⭐ |
 | 🟢 **企业微信 (WeCom)** | 群机器人 | Markdown | ⭐ |
 
@@ -336,15 +338,15 @@ python run.py --export-analysis
 
 ## 设计理念
 
-**Game Rank Reporter 是一个「数据管道 + 分析引擎」，不是 dashboard。**
+**Game Rank Reporter 将本地监测配置、数据采集和自动日报连接起来。**
 
 市面上有很多游戏数据平台（Sensor Tower, data.ai, AppAnnie），但它们要么收费昂贵，要么数据延迟大，要么没有**主动推送**能力。
 
 Game Rank Reporter 的定位不同：
 
-- **不做 dashboard** — 不做可视化界面，专注于「发现变化 → 推送到你面前」
-- **不做全量数据** — 只追踪 Top 100，聚焦真正有价值的头部变动
-- **不做实时** — 每 12 小时一次，够用且不会被反爬
+- **可选范围** — 本地网页选择榜单与公司，云端按保存的范围生成日报
+- **聚焦榜单和公司** — 按选择的 Top N 抓取榜单，独立查看关注公司的产品目录
+- **定期更新** — 默认云端每日运行，来源失败会在报告中说明
 - **数据归你** — SQLite 本地存储，想怎么查就怎么查
 
 ### 🔌 模块化架构

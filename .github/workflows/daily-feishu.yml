@@ -1,0 +1,68 @@
+name: Daily game radar
+
+on:
+  schedule:
+    - cron: '0 9 * * *'
+      timezone: Asia/Shanghai
+  workflow_dispatch:
+    inputs:
+      initialize_history:
+        description: '首次运行且没有历史时建立基线（已有历史仍会恢复）'
+        type: boolean
+        default: false
+      collect_only:
+        description: '只采集和保存历史，不发送消息'
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: daily-game-radar
+  cancel-in-progress: false
+
+jobs:
+  monitor:
+    if: vars.MONITOR_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '24'
+          cache: npm
+      - name: Install dependencies
+        run: |
+          python -m pip install -r requirements-cloud.txt
+          npm ci --omit=dev
+      - name: Collect and deliver daily report
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          MONITOR_SETTINGS_JSON: ${{ secrets.MONITOR_SETTINGS_JSON }}
+          MONITOR_STATE_KEY: ${{ secrets.MONITOR_STATE_KEY }}
+          FEISHU_APP_ID: ${{ secrets.FEISHU_APP_ID }}
+          FEISHU_APP_SECRET: ${{ secrets.FEISHU_APP_SECRET }}
+          FEISHU_RECIPIENTS: ${{ secrets.FEISHU_RECIPIENTS }}
+          INITIALIZE_HISTORY: ${{ inputs.initialize_history || false }}
+          COLLECT_ONLY: ${{ inputs.collect_only || false }}
+        shell: bash
+        run: |
+          args=()
+          if [[ "$INITIALIZE_HISTORY" == "true" ]]; then args+=(--initialize-history); fi
+          if [[ "$COLLECT_ONLY" == "true" ]]; then args+=(--collect-only); fi
+          python cloud_job.py "${args[@]}"
+      - name: Preserve encrypted history and delivery ledger
+        if: ${{ always() && hashFiles('.cloud/state.bin') != '' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: game-radar-state
+          path: .cloud/state.bin
+          retention-days: 90
+          overwrite: true
+          if-no-files-found: error

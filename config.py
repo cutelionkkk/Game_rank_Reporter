@@ -60,6 +60,11 @@ CHANNEL_TEMPLATES = {
         "webhook_url": "",       # 飞书自定义机器人 Webhook URL
         "secret": "",            # 可选: 签名密钥
     },
+    "feishu_bot": {
+        "app_id": "",             # 推荐通过 FEISHU_APP_ID 环境变量设置
+        "app_secret": "",         # 推荐通过 FEISHU_APP_SECRET 环境变量设置
+        # 接收人通过 FEISHU_RECIPIENTS 环境变量设置，避免进入网页配置。
+    },
     "dingtalk": {
         "webhook_url": "",       # 钉钉自定义机器人 Webhook URL
         "secret": "",            # 可选: 加签密钥

@@ -122,7 +122,7 @@ async function save() {
   dirty = false;
   $('save-state').textContent = '配置已保存';
   renderScopes(); renderCompanies();
-  notice('设置已保存，下一次监测会使用这些选择。');
+  notice('本地设置已保存。每天推送的范围请点击“同步每天推送”更新。');
 }
 function emptyFindings(title,description) {
   return `<div class="empty"><div class="symbol">◎</div><h3>${esc(title)}</h3><p>${esc(description)}</p></div>`;
@@ -257,6 +257,17 @@ $('manual-form').addEventListener('submit',e => {
   catch(error) {notice(error.message,true);}
 });
 $('save').addEventListener('click',async () => {try {await save();await refresh();} catch(e) {notice(e.message,true);}});
+$('cloud-sync').addEventListener('click',async () => {
+  $('cloud-sync').disabled = true;
+  try {
+    const result = await api('/api/cloud-sync',settings);
+    settings = result.settings; dirty = false;
+    $('save-state').textContent = '本地与云端配置已保存';
+    renderScopes(); renderCompanies();
+    notice('已同步到 '+result.repository+'，下一次每天推送将使用当前选择。');
+  } catch(e) {notice(e.message,true);}
+  finally {$('cloud-sync').disabled = false;}
+});
 $('run').addEventListener('click',async () => {
   $('run').disabled = true;
   try {
@@ -277,6 +288,11 @@ async function poll() {
   setTimeout(poll,busy ? 3000 : 12000);
 }
 (async () => {
-  try {const data = await api('/api/bootstrap');settings = data.settings;options = data.options;token = data.token;setupForm();await poll();}
+  try {
+    const data = await api('/api/bootstrap');settings = data.settings;options = data.options;token = data.token;
+    $('cloud-destination').textContent = data.cloud_repository ? '同步到 '+data.cloud_repository+' · 每天北京时间 9:00 运行' : '完成 GitHub 云端配置后可同步每天推送范围';
+    $('cloud-sync').disabled = !data.cloud_repository;
+    setupForm();await poll();
+  }
   catch(e) {notice('页面初始化失败：'+e.message,true);}
 })();

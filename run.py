@@ -52,10 +52,11 @@ def main():
         data = export_analysis_data(crawl_time)
         if data:
             print(f"已导出 {len(data['charts'])} 个版块、{len(data['companies'])} 个公司账号：{EXPORT_PATH}")
+    notification_results = {}
     if notify and parts:
         from notify import send_report_parts
-        send_report_parts(parts)
-    return 1 if result and result['errors'] else 0
+        notification_results = send_report_parts(parts)
+    return 1 if (result and result['errors']) or any(not r[0] for r in notification_results.values()) else 0
 
 
 if __name__ == '__main__':

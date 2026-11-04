@@ -214,3 +214,7 @@ Key settings in `settings.json`:
 ## License
 
 [MIT](LICENSE)
+
+## Daily Feishu private reports
+
+The GitHub Actions workflow runs daily at 09:00 Asia/Shanghai and sends a combined report to each configured recipient. Ranking history and the delivery ledger are encrypted before artifact upload. Use the local dashboard’s cloud-sync button to update monitoring preferences. See [setup, recovery and scheduling limitations](docs/FEISHU_CLOUD.md).

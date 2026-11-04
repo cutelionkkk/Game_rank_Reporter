@@ -44,3 +44,7 @@ node_modules/
 .monitor.lock
 *.log
 Thumbs.db
+
+# Temporary local authorization displays
+.auth/
+.cloud/

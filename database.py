@@ -149,6 +149,8 @@ def get_rankings_at(crawl_time, platform, chart_type, country=None):
 
 def get_previous_crawl_time(current_time, platform=None, chart_type=None, country=None, hours=0):
     conditions, params = ['julianday(crawl_time) < julianday(?)'], [current_time]
+    ordering = 'julianday(crawl_time) DESC'
+    order_params = []
     if platform:
         conditions.append('platform=?'); params.append(platform)
     if chart_type:
@@ -156,11 +158,14 @@ def get_previous_crawl_time(current_time, platform=None, chart_type=None, countr
     if platform or country:
         conditions.append('country=?'); params.append(country or load_settings().get('country', 'us'))
     if hours:
-        # Use the latest successful snapshot at or before the requested horizon.
+        # Allow one hour of scheduler jitter around the target; choose the nearest
+        # snapshot, never a same-day rerun from just a few minutes ago.
         cutoff = (parse_time(current_time) - timedelta(hours=hours)).isoformat().replace('+00:00', 'Z')
-        conditions.append('julianday(crawl_time)<=julianday(?)'); params.append(cutoff)
+        conditions.append("julianday(crawl_time)<=julianday(?,'+1 hour')"); params.append(cutoff)
+        ordering = 'ABS(julianday(crawl_time)-julianday(?)), julianday(crawl_time) DESC'
+        order_params.append(cutoff)
     rows = query('SELECT crawl_time AS t FROM rankings WHERE ' + ' AND '.join(conditions) +
-                 ' ORDER BY julianday(crawl_time) DESC LIMIT 1', params)
+                 ' ORDER BY ' + ordering + ' LIMIT 1', params + order_params)
     return rows[0]['t'] if rows else None
 
 
