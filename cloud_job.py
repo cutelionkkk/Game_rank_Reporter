@@ -17,7 +17,7 @@ from cryptography.exceptions import InvalidTag
 
 import config
 import database as db
-from feishu_push import FeishuClient, recipients_from_config, send_daily_report
+from feishu_push import FeishuClient, recipients_from_config, send_daily_report, send_trial_report
 
 HEADER = b'GAME-RADAR-STATE-v1\0'
 ARTIFACT = 'game-radar-state'
@@ -133,11 +133,45 @@ def prune_history():
         for table, column in [('rankings', 'crawl_time'), ('crawl_log', 'crawl_time'),
                               ('monitor_runs', 'crawl_time')]:
             connection.execute(f"DELETE FROM {table} WHERE julianday({column}) < julianday('now','-90 days')")
-        connection.execute("DELETE FROM feishu_outbox WHERE julianday(delivery_date) < julianday('now','-90 days')")
+        for table, column in [('feishu_outbox', 'delivery_date'), ('feishu_trial_outbox', 'delivery_key')]:
+            if connection.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table,)).fetchone():
+                connection.execute(f"DELETE FROM {table} WHERE julianday(substr({column},1,10)) < julianday('now','-90 days')")
     connection.close()
 
 
-def run(bootstrap=False, collect_only=False):
+def trial_settings(settings):
+    """A manual trial overrides only the ephemeral runner configuration."""
+    import copy
+    result = copy.deepcopy(settings)
+    result.update(ranking_enabled=True, company_enabled=False, top_n=100)
+    result['chart_list'] = [dict(platform=p,country='us',chart_type='free',genre='all',enabled=True)
+                            for p in ('ios','gp')]
+    return result
+
+
+def trial_report(crawl_time):
+    from html import escape
+    from analyzer import generate_full_analysis
+    from report import generate_report_parts, PLATFORM_NAMES
+    analysis = generate_full_analysis(crawl_time)
+    parts = ['<b>试推 · 美国全部游戏免费榜</b>\nApp Store + Google Play · 采集 Top 100']
+    comparable = any(c['status'] == 'ok' and c['previous_time'] for c in analysis['charts'].values())
+    if comparable:
+        parts.extend(generate_report_parts(crawl_time))
+    for chart in analysis['charts'].values():
+        if chart['status'] == 'ok' and not chart['previous_time']:
+            lines = [f"<b>{PLATFORM_NAMES[chart['scope']['platform']]} · 当前前 10 名</b>"]
+            for app in chart['current'][:10]:
+                lines.append(f"#{app['rank']}  {escape(app['app_name'][:100])}")
+            parts.append('\n'.join(lines))
+        elif not comparable and chart['status'] != 'ok':
+            parts.append(escape(PLATFORM_NAMES[chart['scope']['platform']] + '：' + (chart.get('message') or '本轮未取得榜单')))
+    if not comparable:
+        parts.append('以上为当前排名快照。暂缺符合 24 小时窗口的历史，本次不判定爬升或首次上榜。')
+    return parts
+
+
+def run(bootstrap=False, collect_only=False, trial_us_free=False):
     from monitoring import run_monitoring
     from report import generate_report_parts
     key = state_key()
@@ -148,6 +182,13 @@ def run(bootstrap=False, collect_only=False):
     if not collect_only:
         recipients_from_config()
         FeishuClient()  # Validate credentials before any collection.
+    trial_id = None
+    if trial_us_free:
+        run_id = os.environ.get('GITHUB_RUN_ID', '')
+        if not run_id.isdigit():
+            raise ValueError('试推需要有效的 GitHub 运行编号')
+        trial_id = 'github-' + run_id
+        settings = trial_settings(settings)
     config.save_settings(settings)
     restore_latest(key, bootstrap)
     # Only save after a successful restore/explicit first-run initialization.
@@ -155,12 +196,12 @@ def run(bootstrap=False, collect_only=False):
     try:
         with contextlib.redirect_stdout(io.StringIO()):
             result = run_monitoring()
-            parts = generate_report_parts(result['crawl_time'])
+            parts = trial_report(result['crawl_time']) if trial_us_free else generate_report_parts(result['crawl_time'])
         print(f"采集完成：{result['ranking_entries']} 条排名，{result['company_catalogs']} 个公司目录，{len(result['errors'])} 项失败。")
         if collect_only:
             print('仅采集，本次没有发送消息。')
             return 1 if result['errors'] else 0
-        delivery = send_daily_report(parts)
+        delivery = send_trial_report(parts, trial_id) if trial_us_free else send_daily_report(parts)
         print(f"私聊投递：{delivery['sent']} 条成功，{delivery['skipped']} 条已送达跳过，{len(delivery['failures'])} 项失败。")
         for error in delivery['failures']:
             print(error)
@@ -176,9 +217,10 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--initialize-history', action='store_true')
     parser.add_argument('--collect-only', action='store_true')
+    parser.add_argument('--trial-us-free', action='store_true', help='单次试推美国全部游戏免费榜，不修改每日配置')
     options = parser.parse_args()
     try:
-        raise SystemExit(run(options.initialize_history, options.collect_only))
+        raise SystemExit(run(options.initialize_history, options.collect_only, options.trial_us_free))
     except Exception as exc:
         # Public Actions logs must not include response bodies or request headers.
         if isinstance(exc, (ValueError, RuntimeError)):

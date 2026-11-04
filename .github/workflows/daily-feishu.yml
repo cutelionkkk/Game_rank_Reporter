@@ -15,6 +15,11 @@ on:
         type: boolean
         default: false
 
+      trial_us_free:
+        description: '单次试推美国全部游戏免费榜（两个商店 Top100），独立于当天日报'
+        type: boolean
+        default: false
+
 permissions:
   contents: read
   actions: read
@@ -51,11 +56,13 @@ jobs:
           FEISHU_RECIPIENTS: ${{ secrets.FEISHU_RECIPIENTS }}
           INITIALIZE_HISTORY: ${{ inputs.initialize_history || false }}
           COLLECT_ONLY: ${{ inputs.collect_only || false }}
+          TRIAL_US_FREE: ${{ inputs.trial_us_free || false }}
         shell: bash
         run: |
           args=()
           if [[ "$INITIALIZE_HISTORY" == "true" ]]; then args+=(--initialize-history); fi
           if [[ "$COLLECT_ONLY" == "true" ]]; then args+=(--collect-only); fi
+          if [[ "$TRIAL_US_FREE" == "true" ]]; then args+=(--trial-us-free); fi
           python cloud_job.py "${args[@]}"
       - name: Preserve encrypted history and delivery ledger
         if: ${{ always() && hashFiles('.cloud/state.bin') != '' }}
