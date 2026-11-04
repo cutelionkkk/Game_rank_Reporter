@@ -25,7 +25,7 @@ concurrency:
 
 jobs:
   monitor:
-    if: vars.MONITOR_ENABLED == 'true'
+    if: vars.MONITOR_ENABLED == 'true' || (github.event_name == 'workflow_dispatch' && inputs.collect_only)
     runs-on: ubuntu-latest
     timeout-minutes: 50
     steps:
