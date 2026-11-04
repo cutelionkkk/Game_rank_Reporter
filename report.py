@@ -1,122 +1,74 @@
-"""Report generator — one message per chart, focused on changes + insights"""
-
-import json
+"""Compact daily digest; detailed analysis remains available in the export."""
+from collections import defaultdict
 from html import escape
-from datetime import datetime
-from collections import Counter, defaultdict
+from zoneinfo import ZoneInfo
 
 from analyzer import generate_full_analysis
-from database import get_rankings_at, get_latest_crawl_time, get_all_chart_types_at
 from config import load_settings
+from database import parse_time
 from genres import get_genre_display
-from game_info import get_game_info
 
-PLATFORM_NAMES = {'gp': 'Google Play', 'ios': 'iOS App Store'}
+PLATFORM_NAMES = {'gp': 'Google Play', 'ios': 'iOS'}
 CHART_NAMES = {'free': '免费榜', 'paid': '付费榜', 'grossing': '畅销榜'}
-CHART_EMOJI = {'free': '🆓', 'paid': '💵', 'grossing': '💰'}
-PLATFORM_FLAG = {'ios': '🍎', 'gp': '🤖'}
 
 
-
-def _parse_chart_key(key):
-    parts = key.split('_', 1)
-    platform = parts[0]
-    rest = parts[1] if len(parts) > 1 else ''
-    if ':' in rest:
-        base_chart, genre = rest.split(':', 1)
-    else:
-        base_chart, genre = rest, 'all'
-    return platform, base_chart, genre
-
-
-def _chart_title(platform, base_chart, genre) -> str:
-    flag = PLATFORM_FLAG.get(platform, '')
-    pname = 'iOS' if platform == 'ios' else 'Google Play'
-    cname = CHART_NAMES.get(base_chart, base_chart)
-    if genre != 'all':
-        gname = get_genre_display(genre)
-        return f"{flag} {pname} {gname}{cname}"
-    return f"{flag} {pname} {cname}"
-
-
-def _fmt_change(change: int) -> str:
-    if change > 0:
-        return f"⬆️+{change}"
-    elif change < 0:
-        return f"⬇️{change}"
-    return "→"
-
-
-def _gameplay_tag(app: dict) -> str:
-    info = get_game_info(
-        app_name=app.get('app_name', ''),
-        developer=app.get('developer', ''),
-        app_id=app.get('app_id', ''),
-        use_search=False,
-    )
-    gp = info.get('gameplay', '')
-    return f"（{gp}）" if gp else ''
-
-
-def _gameplay_label(app_name: str, developer: str = '', app_id: str = '') -> str:
-    info = get_game_info(app_name=app_name, developer=developer,
-                         app_id=app_id, use_search=False)
-    return info.get('gameplay', '') or '其他'
-
-
-def _developer_stats(apps: list, top_n: int = 5) -> list[str]:
-    """统计开发商在榜产品数，返回格式化行列表"""
-    dev_counter = Counter()
-    dev_top_rank = {}   # 每个开发商的最高名次
-    for a in apps:
-        dev = (a.get('developer') or '').strip()
-        if not dev:
-            continue
-        dev_counter[dev] += 1
-        r = a.get('rank', 999)
-        if dev not in dev_top_rank or r < dev_top_rank[dev]:
-            dev_top_rank[dev] = r
-
-    lines = []
-    for dev, cnt in dev_counter.most_common(top_n):
-        if cnt < 2:
-            break  # 只列出多款在榜的
-        top_r = dev_top_rank.get(dev, '?')
-        lines.append(f"  {dev}：{cnt}款（最高 #{top_r}）")
-    return lines
-
-
-def _gameplay_distribution(apps: list, top_n: int = 10) -> list[str]:
-    """统计玩法分类分布，返回格式化行列表"""
-    gameplay_counter = Counter()
-    for a in apps:
-        tag = _gameplay_label(
-            a.get('app_name', ''),
-            a.get('developer', ''),
-            a.get('app_id', ''),
-        )
-        gameplay_counter[tag] += 1
-
-    lines = []
-    for tag, cnt in gameplay_counter.most_common(top_n):
-        bar = '█' * min(cnt // 3, 10)  # 简易条形图
-        lines.append(f"  {tag}：{cnt}款 {bar}")
-    return lines
-
-
-def _text(value, limit=160):
+def _text(value, limit=120):
     return escape(str(value or '')[:limit])
 
 
-def _sections(title, lines, max_len):
+def _scope_label(scope):
+    genre = '' if scope['genre'] == 'all' else get_genre_display(scope['genre'])
+    return f"{scope['country'].upper()} · {genre}{CHART_NAMES.get(scope['chart_type'], scope['chart_type'])}"
+
+
+def _sections(title, blocks, max_len):
     parts, current = [], title
-    for line in lines:
-        if len(current) + len(line) + 1 > max_len:
+    for block in blocks:
+        if len(block) + len(title) + 4 > max_len:
+            # Large company groups still respect the transport's message limit.
+            for line in block.split('\n'):
+                if len(current) + len(line) + 1 > max_len:
+                    parts.append(current)
+                    current = title + '（续）'
+                current += '\n' + line
+            continue
+        if len(current) + len(block) + 2 > max_len and current != title:
             parts.append(current)
             current = title + '（续）'
-        current += '\n' + line
+        current += '\n\n' + block
     parts.append(current)
     return parts
+
+
+def _rank_items(charts, kind):
+    groups = {}
+    for chart in charts:
+        for app in chart['changes'].get(kind, []):
+            key = (chart['scope']['platform'], app['app_id'])
+            item = groups.setdefault(key, dict(app=app, platform=key[0], signals=[]))
+            item['signals'].append((chart['scope'], app))
+    score = (lambda x: -max(a['rank_change'] for _, a in x['signals'])) if kind == 'surges' else (
+        lambda x: min(a['rank'] for _, a in x['signals']))
+    return sorted(groups.values(), key=lambda x: (score(x), x['app']['app_name']))
+
+
+def _rank_blocks(items, kind, limit):
+    blocks = []
+    for i, item in enumerate(items[:limit], 1):
+        app = item['app']
+        lines = [f"{i}. <b>{_text(app['app_name'])}</b> · {PLATFORM_NAMES[item['platform']]}"]
+        if app.get('developer'):
+            lines.append(_text(app['developer']))
+        signals = sorted(item['signals'], key=lambda s: -s[1]['rank_change'] if kind == 'surges' else s[1]['rank'])
+        for scope, a in signals[:3]:
+            change = f"#{a['prev_rank']} → #{a['rank']}（↑{a['rank_change']}）" if kind == 'surges' else f"新进 #{a['rank']}"
+            lines.append(_text(_scope_label(scope)) + '：' + change)
+        if len(signals) > 3:
+            lines.append(f"另有 {len(signals)-3} 个榜单信号")
+        blocks.append('\n'.join(lines))
+    if len(items) > limit:
+        blocks.append(f'另有 {len(items)-limit} 款，本节仅展示前 {limit} 款。')
+    return blocks
 
 
 def generate_report_parts(crawl_time=None, max_len=3900):
@@ -125,78 +77,91 @@ def generate_report_parts(crawl_time=None, max_len=3900):
         return ['暂无监测数据，请先运行一次监测。']
     settings = load_settings()
     limit = settings['report_max_items']
-    parts = []
-    for chart in analysis['charts'].values():
-        scope = chart['scope']
-        title = '<b>' + _text(_chart_title(scope['platform'],scope['chart_type'],scope['genre']))
-        title += f" · {scope['country'].upper()}</b>\n{_text(analysis['crawl_time'])}"
-        lines = []
-        if chart['status'] != 'ok':
-            lines.append('⚠️ 本轮采集失败：' + _text(chart['message'],500) if chart['status'] == 'error' else '本轮尚未采集这个版块。')
-        elif not chart['previous_time']:
-            lines.append('📸 已记录快照；暂无符合对比窗口的历史数据，不判定排名爬升或新上榜。')
-        else:
-            lines.append(f"📈 <b>上升 ≥{chart['threshold']} 名</b> · 实际间隔 {chart['elapsed_hours']} 小时")
-            lines.append('对比快照：' + _text(chart['previous_time']))
-            changes = chart['changes']
-            for a in changes['surges'][:limit]:
-                lines.append(f"⬆ +{a['rank_change']} <b>{_text(a['app_name'])}</b> #{a['prev_rank']} → #{a['rank']} · {_text(a.get('developer'))}")
-            if not changes['surges']:
-                lines.append('本轮无达到阈值的上升项目。')
-            if len(changes['surges']) > limit:
-                lines.append(f"共 {len(changes['surges'])} 款达到阈值，完整结果见本地网页或 JSON 导出。")
-            for a in changes['drops'][:limit]:
-                lines.append(f"⬇ {a['rank_change']} {_text(a['app_name'])} #{a['prev_rank']} → #{a['rank']}")
-            if changes['new_entries']:
-                lines.append('🆕 新上榜（不等于新发布）：' + '、'.join(f"{_text(a['app_name'],60)} #{a['rank']}" for a in changes['new_entries'][:limit]))
-            if changes['exits']:
-                lines.append('离开可比榜单范围：' + '、'.join(_text(a['app_name'],60) for a in changes['exits'][:limit]))
-        if chart['current']:
-            lines.append(f"本轮取得 {len(chart['current'])} 款 · 目标 Top {settings['top_n']}")
-            stats = _developer_stats(chart['current'])
-            if stats:
-                lines.append('🏢 <b>在榜产品数</b>')
-                lines.extend(_text(line,250) for line in stats)
-            gameplay = _gameplay_distribution(chart['current'], top_n=5)
-            if gameplay:
-                lines.append('🎮 <b>玩法分布（规则/缓存标签）</b>')
-                lines.extend(_text(line,250) for line in gameplay)
-        parts.extend(_sections(title,lines,max_len))
-    for data in analysis['companies']:
-        company = data['company']
-        title = f"🏢 <b>{_text(company['name'])} · {PLATFORM_NAMES[company['platform']]}</b>\n{_text(analysis['crawl_time'])}"
-        lines = []
-        for snap in data['snapshots']:
-            country = snap['country'].upper()
-            if snap['status'] == 'error':
-                lines.append(f"⚠️ {country} 采集失败：{_text(snap['message'],500)}")
+    time = parse_time(analysis['crawl_time']).astimezone(ZoneInfo('Asia/Shanghai'))
+    title = f'<b>游戏雷达 · {time:%m月%d日}</b>'
+    window = f"对比约 {settings['comparison_hours']} 小时前" if settings['comparison_hours'] else '对比上次采集'
+    blocks = [f"Top {settings['top_n']} · {window} · 上升 ≥{settings['rank_surge_threshold']} 名"]
+    charts = list(analysis['charts'].values())
+    comparable = [c for c in charts if c['status'] == 'ok' and c['previous_time']]
+    chart_errors = [c for c in charts if c['status'] != 'ok']
+    baselines = [c for c in charts if c['status'] == 'ok' and not c['previous_time']]
+    if charts:
+        surges = _rank_items(comparable, 'surges')
+        entries = _rank_items(comparable, 'new_entries')
+        for heading, items, kind in [('📈 快速爬升', surges, 'surges'), ('🆕 首次上榜', entries, 'new_entries')]:
+            blocks.append('<b>' + heading + '</b>' + ('\n相较对比快照新上榜，不等于新发布。' if kind == 'new_entries' else ''))
+            if items:
+                blocks.extend(_rank_blocks(items, kind, limit))
+            elif not comparable:
+                blocks.append('暂缺可比数据，待后续日报比较。')
             else:
-                lines.append(f"{country}：取得 {snap['count']} 款游戏" + ('，首次建立基线' if snap['baseline'] else ''))
-                if snap['message']:
-                    lines.append('⚠️ ' + _text(snap['message'],300))
-        for event in data['events'][:limit]:
-            label = '近期发布' if event['kind'] == 'new_release' else '首次发现（不确定为新游）'
-            lines.append(f"🆕 <b>{_text(event['app_name'])}</b> · {label} · {event['country'].upper()}")
-            lines.append('商店首发日期：' + _text(event.get('release_date') or '未知') + '；首次监测：' + _text(event['first_seen']))
-        if len(data['events']) > limit:
-            lines.append(f"共发现 {len(data['events'])} 款，完整结果见本地网页。")
-        elif not data['events']:
-            lines.append('本轮无新增发现。' if data['snapshots'] and all(s['status'] != 'error' for s in data['snapshots']) else '本轮数据不足，无法判断新增。')
-        parts.extend(_sections(title,lines,max_len))
-    return parts or ['未启用监测项，请在本地网页中选择版块或公司。']
+                blocks.append('可比榜单内暂无符合条件的游戏。')
+
+    companies = analysis['companies']
+    if companies:
+        blocks.append('<b>🏢 关注公司新游</b>')
+        groups = defaultdict(list)
+        for data in companies:
+            company = data['company']
+            groups[company.get('group') or company['name']].append(data)
+        for name, members in groups.items():
+            events = {}
+            incomplete, baseline = False, False
+            for member in members:
+                company = member['company']
+                snaps = member['snapshots']
+                incomplete |= len(snaps) < len(company['countries']) or any(s['status'] != 'ok' for s in snaps)
+                baseline |= any(s.get('baseline') for s in snaps)
+                for event in member['events']:
+                    key = (company['platform'], event['app_id'])
+                    item = events.setdefault(key, dict(event=event, company=company, countries=set()))
+                    item['countries'].add(event['country'].upper())
+            lines = ['<b>' + _text(name) + '</b>']
+            ordered = sorted(events.values(), key=lambda x: (x['event']['kind'] != 'new_release', x['event']['app_name']))
+            for item in ordered[:limit]:
+                e, c = item['event'], item['company']
+                label = '近期发布' if e['kind'] == 'new_release' else '首次发现，未确认为近期新游'
+                if e['kind'] == 'new_release' and e.get('release_date'):
+                    label += ' · ' + str(e['release_date'])[:10]
+                lines.append(f"• {_text(e['app_name'])} · {PLATFORM_NAMES[c['platform']]} · {','.join(sorted(item['countries']))}")
+                lines.append(f"  {_text(c['name'])}｜{_text(label)}")
+            if len(ordered) > limit:
+                lines.append(f'另有 {len(ordered)-limit} 款新增发现。')
+            if not ordered:
+                lines.append('部分账号数据未完整取得，暂不能确认有无新游。' if incomplete else
+                             '新关注账号已建档，下次起识别新增。' if baseline else '暂无新增游戏。')
+            elif incomplete or baseline:
+                lines.append('部分账号仍在建档或数据不完整。')
+            blocks.append('\n'.join(lines))
+
+    notes = []
+    if baselines:
+        notes.append(f'{len(baselines)} 个榜单暂无可比历史。')
+    shallow = [c for c in charts if c['status'] == 'ok' and len(c['current']) < settings['top_n']]
+    if shallow:
+        notes.append(f"{len(shallow)} 个榜单返回不足 Top {settings['top_n']}，按实际范围比较。")
+    for c in chart_errors[:3]:
+        notes.append(f"{PLATFORM_NAMES[c['scope']['platform']]} {_scope_label(c['scope'])}：{c.get('message') or '尚未采集'}")
+    if len(chart_errors) > 3:
+        notes.append(f'另有 {len(chart_errors)-3} 个榜单采集异常。')
+    if notes:
+        blocks.append('<b>采集说明</b>\n' + '\n'.join(_text(n,200) for n in notes))
+    if not charts and not companies:
+        return ['未启用监测项，请在本地网页中选择版块或公司。']
+    return _sections(title, blocks, max_len)
 
 
 def generate_report(crawl_time=None):
-    return ('\n\n' + '─' * 40 + '\n\n').join(generate_report_parts(crawl_time))
+    return '\n\n'.join(generate_report_parts(crawl_time))
 
 
 def generate_summary_line(crawl_time=None):
     a = generate_full_analysis(crawl_time)
     if not a:
         return '📊 游戏监测：暂无数据'
-    surges = sum(len(c['changes'].get('surges',[])) for c in a['charts'].values())
+    surges = len(_rank_items(list(a['charts'].values()), 'surges'))
     events = sum(len(c['events']) for c in a['companies'])
-    return f'📊 游戏监测：{surges} 个榜单爬升信号，{events} 个公司新增发现'
+    return f'📊 游戏监测：{surges} 款快速爬升游戏，{events} 个公司新增发现'
 
 
 if __name__ == '__main__':

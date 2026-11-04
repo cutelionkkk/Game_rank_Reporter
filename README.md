@@ -256,26 +256,30 @@ python run.py --notify     # 推送最新报告到已配置渠道
 
 ## 报告示例
 
-每个榜单独立发一条消息，格式简洁：
+日报合并为三个重点版块；同一游戏跨榜单去重，不再展示在榜产品数、玩法分布和逐榜下跌清单。以下为格式示例，非实际监测结果：
 
 ```
-💰 iOS 益智畅销榜 Top 10 — 2026-02-27 12:00 UTC
+游戏雷达 · 11月05日
+Top 100 · 对比约 24 小时前 · 上升 ≥15 名
 
-#1 Royal Match（三消益智）  ⬆️+3
-    Dream Games
-#2 Gossip Harbor（合并+叙事）
-    Microfun Limited
-#3 Candy Crush Saga（三消消除）  ⬇️-1
-    King
-#4 Royal Kingdom（三消益智）  🆕
-    Dream Games
-...
+📈 快速爬升
+1. 示例游戏 A · iOS
+示例工作室
+US · 益智免费榜：#45 → #12（↑33）
+JP · 益智免费榜：#58 → #30（↑28）
 
-📊 本轮变动：
-  🔥 飙升: Royal Kingdom（三消益智）#15→#4（共3款↑）
-  🆕 新上榜: Royal Kingdom(#4), Pixel Flow!(#7)
-  🚪 跌出: Block Puzzle Master, Tile Blast
+🆕 首次上榜
+相较对比快照新上榜，不等于新发布。
+1. 示例游戏 B · Google Play
+US · 免费榜：新进 #36
+
+🏢 关注公司新游
+示例公司
+• 示例游戏 C · iOS · US
+  示例工作室｜近期发布 · 2026-11-04
 ```
+
+每节默认最多展示 `report_max_items` 款，更多结果保留在分析导出中。采集不足、缺少历史或账号暂不可用会明确说明。
 
 ---
 

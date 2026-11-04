@@ -82,7 +82,7 @@ function renderScopes() {
 }
 function renderCompanies() {
   renderCounts();
-  $('watch-list').innerHTML = settings.companies.map((c,i) => `<div class="card watch"><input type="checkbox" data-company-toggle="${i}" ${c.enabled ? 'checked' : ''} aria-label="启用 ${esc(c.name)}"><div><input class="company-name" data-company-name="${i}" value="${esc(c.name)}" aria-label="公司关注名称" maxlength="200"><small>${esc(options.platforms[c.platform].name_zh)} · ID ${esc(c.developer_id)}</small></div><label>关注国家 / 地区<input data-company-countries="${i}" value="${esc(c.countries.join(', '))}" placeholder="us, jp" aria-label="${esc(c.name)} 的关注地区"></label><button class="text-button danger" data-company-remove="${i}">取消关注</button></div>`).join('') || '<div class="empty"><div class="symbol">◎</div><h3>建立你的公司观察名单</h3><p>搜索公司或旗下游戏，确认开发者账号后添加关注。</p></div>';
+  $('watch-list').innerHTML = settings.companies.map((c,i) => `<div class="card watch"><input type="checkbox" data-company-toggle="${i}" ${c.enabled ? 'checked' : ''} aria-label="启用 ${esc(c.name)}"><div><input class="company-name" data-company-name="${i}" value="${esc(c.name)}" aria-label="公司关注名称" maxlength="200">${c.aliases?.length ? `<small>原账号：${esc(c.aliases.join('、'))}</small>` : ''}<small>${c.group ? esc(c.group) + ' · ' : ''}${esc(options.platforms[c.platform].name_zh)} · ID ${esc(c.developer_id)}</small></div><label>关注国家 / 地区<input data-company-countries="${i}" value="${esc(c.countries.join(', '))}" placeholder="us, jp" aria-label="${esc(c.name)} 的关注地区"></label><button class="text-button danger" data-company-remove="${i}">取消关注</button></div>`).join('') || '<div class="empty"><div class="symbol">◎</div><h3>建立你的公司观察名单</h3><p>搜索公司或旗下游戏，确认开发者账号后添加关注。</p></div>';
 }
 function addCompany(platform, id, name, countries) {
   const existing = settings.companies.find(c => c.platform === platform && c.developer_id === id);
@@ -173,9 +173,9 @@ function renderFindings() {
     for (const c of companies) {
       for (const country of c.company.countries) {
         const snap = c.snapshots.find(s => s.country === country);
-        const label = !snap ? '待采集' : snap.status === 'error' ? '采集失败' : snap.baseline ? '首次基线' : snap.status === 'partial' ? '目录不完整' : '已采集';
-        const desc = !snap ? '本轮未取得这个地区的目录' : snap.status === 'error' ? snap.message : `取得 ${snap.count} 款游戏` + (snap.message ? ' · '+snap.message : '');
-        html += `<div class="status-line"><span class="badge ${snap?.status === 'error' ? 'red' : snap?.status === 'partial' ? 'amber' : ''}">${label}</span><div><b>${esc(c.company.name)} · ${esc(options.platforms[c.company.platform].name_zh)} · ${esc(country.toUpperCase())}</b><p>${esc(desc)}</p></div></div>`;
+        const label = !snap ? '待采集' : snap.status === 'error' ? '采集失败' : snap.status === 'unavailable' ? '暂不可用 · 持续复查' : snap.baseline ? '首次基线' : snap.status === 'partial' ? '目录不完整' : '已采集';
+        const desc = !snap ? '本轮未取得这个地区的目录' : ['error','unavailable'].includes(snap.status) ? snap.message : `取得 ${snap.count} 款游戏` + (snap.message ? ' · '+snap.message : '');
+        html += `<div class="status-line"><span class="badge ${snap?.status === 'error' ? 'red' : ['partial','unavailable'].includes(snap?.status) ? 'amber' : ''}">${label}</span><div><b>${esc(c.company.name)} · ${esc(options.platforms[c.company.platform].name_zh)} · ${esc(country.toUpperCase())}</b><p>${esc(desc)}</p></div></div>`;
       }
     }
     if (!charts.length && !companies.length) html += '<div class="status-line"><p>当前没有启用的版块或公司。请在设置中选择。</p></div>';
