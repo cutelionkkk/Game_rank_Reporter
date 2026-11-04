@@ -143,32 +143,15 @@ def trial_settings(settings):
     """A manual trial overrides only the ephemeral runner configuration."""
     import copy
     result = copy.deepcopy(settings)
-    result.update(ranking_enabled=True, company_enabled=False, top_n=100)
+    result.update(ranking_enabled=True, top_n=100)
     result['chart_list'] = [dict(platform=p,country='us',chart_type='free',genre='all',enabled=True)
                             for p in ('ios','gp')]
     return result
 
 
 def trial_report(crawl_time):
-    from html import escape
-    from analyzer import generate_full_analysis
-    from report import generate_report_parts, PLATFORM_NAMES
-    analysis = generate_full_analysis(crawl_time)
-    parts = ['<b>试推 · 美国全部游戏免费榜</b>\nApp Store + Google Play · 采集 Top 100']
-    comparable = any(c['status'] == 'ok' and c['previous_time'] for c in analysis['charts'].values())
-    if comparable:
-        parts.extend(generate_report_parts(crawl_time))
-    for chart in analysis['charts'].values():
-        if chart['status'] == 'ok' and not chart['previous_time']:
-            lines = [f"<b>{PLATFORM_NAMES[chart['scope']['platform']]} · 当前前 10 名</b>"]
-            for app in chart['current'][:10]:
-                lines.append(f"#{app['rank']}  {escape(app['app_name'][:100])}")
-            parts.append('\n'.join(lines))
-        elif not comparable and chart['status'] != 'ok':
-            parts.append(escape(PLATFORM_NAMES[chart['scope']['platform']] + '：' + (chart.get('message') or '本轮未取得榜单')))
-    if not comparable:
-        parts.append('以上为当前排名快照。暂缺符合 24 小时窗口的历史，本次不判定爬升或首次上榜。')
-    return parts
+    from trial_review import generate_trial_review
+    return generate_trial_review(crawl_time)
 
 
 def run(bootstrap=False, collect_only=False, trial_us_free=False):
@@ -194,6 +177,10 @@ def run(bootstrap=False, collect_only=False, trial_us_free=False):
     # Only save after a successful restore/explicit first-run initialization.
     # A failed restore must never publish a blank replacement artifact.
     try:
+        if trial_us_free and os.environ.get('MONITOR_HISTORY_BACKFILL_JSON'):
+            from history_import import import_history
+            count = import_history(os.environ['MONITOR_HISTORY_BACKFILL_JSON'])
+            print(f'补入 {count} 份原始历史快照。')
         with contextlib.redirect_stdout(io.StringIO()):
             result = run_monitoring()
             parts = trial_report(result['crawl_time']) if trial_us_free else generate_report_parts(result['crawl_time'])

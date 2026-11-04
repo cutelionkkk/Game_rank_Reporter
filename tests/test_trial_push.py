@@ -33,7 +33,7 @@ class TrialCase(BaseCase):
         before=copy.deepcopy(daily)
         trial=trial_settings(daily)
         self.assertEqual(daily,before)
-        self.assertFalse(trial['company_enabled'])
+        self.assertEqual(trial['company_enabled'],daily['company_enabled'])
         self.assertEqual(trial['top_n'],100)
         self.assertEqual({(x['platform'],x['country'],x['chart_type'],x['genre']) for x in trial['chart_list']},
                          {('ios','us','free','all'),('gp','us','free','all')})

@@ -16,7 +16,7 @@ on:
         default: false
 
       trial_us_free:
-        description: '单次试推美国全部游戏免费榜（两个商店 Top100），独立于当天日报'
+        description: '单次试推美国免费榜与已关注竞品（两个商店 Top100），独立于当天日报'
         type: boolean
         default: false
 
@@ -50,6 +50,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
           MONITOR_SETTINGS_JSON: ${{ secrets.MONITOR_SETTINGS_JSON }}
+          MONITOR_HISTORY_BACKFILL_JSON: ${{ secrets.MONITOR_HISTORY_BACKFILL_JSON }}
           MONITOR_STATE_KEY: ${{ secrets.MONITOR_STATE_KEY }}
           FEISHU_APP_ID: ${{ secrets.FEISHU_APP_ID }}
           FEISHU_APP_SECRET: ${{ secrets.FEISHU_APP_SECRET }}
