@@ -65,8 +65,10 @@ class CardCase(BaseCase):
             self.assertLess(len(card['body']['elements']),100)
         self.assertIn("<font color='green'>↑19</font>",all_markdown)
 
+    @patch('feishu_push.validate_report',return_value={})
+    @patch('feishu_push.validate_saved_payload',return_value=None)
     @patch('feishu_push.requests.post')
-    def test_transport_sends_interactive_card_and_persists_type(self,post):
+    def test_transport_sends_interactive_card_and_persists_type(self,post,saved_guard,new_guard):
         post.return_value=response(data={'message_id':'om_card'})
         client=FeishuClient(dict(app_id='cli_test',app_secret='not-a-real-secret'))
         client.token='not-a-real-token'
@@ -78,7 +80,7 @@ class CardCase(BaseCase):
         self.assertEqual(json.loads(payload['content'])['schema'],'2.0')
         self.assertEqual(db.query('SELECT msg_type FROM feishu_trial_outbox')[0]['msg_type'],'interactive')
 
-    def test_legacy_pending_post_is_migrated_and_retried_unchanged(self):
+    def test_legacy_unchecked_pending_post_is_preserved_but_not_sent(self):
         with db.get_db() as conn:
             conn.execute('''CREATE TABLE feishu_outbox (
                 delivery_date TEXT,app_id TEXT,recipient_type TEXT,recipient_id TEXT,
@@ -88,8 +90,8 @@ class CardCase(BaseCase):
                          ('2026-11-04','cli_test','email',RECIPIENTS[0]['id'],0,'original-post','old-uuid',None,None,'retry'))
         client=Mock(app_id='cli_test',send=Mock(return_value='om_old'))
         cfg=dict(recipients=RECIPIENTS[:1])
-        result=send_daily_report(['new card'],cfg,'2026-11-04',client)
-        self.assertEqual(result['sent'],1)
-        client.send.assert_called_once_with(RECIPIENTS[0],'original-post','old-uuid','post')
-        self.assertEqual(send_daily_report(['changed'],cfg,'2026-11-04',client)['skipped'],1)
+        from report_guard import ReportBlocked
+        with self.assertRaisesRegex(ReportBlocked,'审核记录'):
+            send_daily_report(['new card'],cfg,'2026-11-04',client)
+        client.send.assert_not_called()
         self.assertEqual(db.query('SELECT content,msg_type FROM feishu_outbox')[0],dict(content='original-post',msg_type='post'))

@@ -8,7 +8,9 @@ from feishu_push import send_daily_report,send_trial_report
 from cloud_job import trial_settings,trial_report
 
 class TrialCase(BaseCase):
-    def test_trial_isolated_from_daily_and_retry_keeps_original_payload(self):
+    @patch('feishu_push.validate_report',return_value={})
+    @patch('feishu_push.validate_saved_payload',return_value=None)
+    def test_trial_isolated_from_daily_and_retry_keeps_original_payload(self, saved_guard, new_guard):
         client=Mock(app_id='cli_test',send=Mock(return_value='om_daily'))
         cfg=dict(recipients=RECIPIENTS)
         day='2026-11-04'

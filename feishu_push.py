@@ -12,6 +12,7 @@ import requests
 from database import get_db, init_db, utcnow, query
 from monitoring import monitor_lock
 from feishu_card import build_cards
+from report_guard import validate_report, seal_payload, validate_saved_payload
 
 API = 'https://open.feishu.cn/open-apis'
 
@@ -123,6 +124,8 @@ def _init_outbox(trial=False):
             PRIMARY KEY({field},app_id,recipient_type,recipient_id,part))''')
         if 'msg_type' not in {r['name'] for r in conn.execute(f'PRAGMA table_info({table})')}:
             conn.execute(f"ALTER TABLE {table} ADD COLUMN msg_type TEXT NOT NULL DEFAULT 'post'")
+        if 'approval_json' not in {r['name'] for r in conn.execute(f'PRAGMA table_info({table})')}:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN approval_json TEXT NOT NULL DEFAULT ''")
     conn.close()
 
 
@@ -138,6 +141,23 @@ def send_trial_report(parts, trial_id, config=None, day=None, client=None):
     return _send_report(parts, config, day, client, trial_id)
 
 
+def daily_delivery_state(config=None, day=None, client=None):
+    """Only the currently configured recipients count toward today's completion."""
+    recipients = recipients_from_config(config)
+    client = client or FeishuClient(config)
+    day = day or datetime.now(ZoneInfo('Asia/Shanghai')).date().isoformat()
+    _init_outbox()
+    missing, pending, sent = 0, 0, 0
+    for recipient in recipients:
+        rows = query('''SELECT sent_at FROM feishu_outbox WHERE delivery_date=? AND app_id=?
+            AND recipient_type=? AND recipient_id=?''', (day,client.app_id,recipient['type'],recipient['id']))
+        missing += int(not rows)
+        pending += sum(not r['sent_at'] for r in rows)
+        sent += sum(bool(r['sent_at']) for r in rows)
+    return dict(complete=not missing and not pending, resumable=not missing,
+                missing_recipients=missing, pending=pending, sent=sent)
+
+
 def _send_report(parts, config, day, client, trial_id=None):
     recipients = recipients_from_config(config)
     client = client or FeishuClient(config)
@@ -147,26 +167,39 @@ def _send_report(parts, config, day, client, trial_id=None):
     table = 'feishu_trial_outbox' if trial_id else 'feishu_outbox'
     field = 'delivery_key' if trial_id else 'delivery_date'
     delivery_key = day + ':' + trial_id if trial_id else day
-    cards = build_cards(parts, day, trial=bool(trial_id))
     with monitor_lock():
         _init_outbox(trial=bool(trial_id))
+        existing_recipients = {(r['recipient_type'],r['recipient_id']) for r in query(
+            f'SELECT recipient_type,recipient_id FROM {table} WHERE {field}=? AND app_id=?',
+            (delivery_key,client.app_id))}
+        new_recipients = [r for r in recipients if (r['type'],r['id']) not in existing_recipients]
+        cards = []
+        if new_recipients:
+            if parts is None:
+                raise ValueError('部分接收人尚无今日日报，需要先采集生成报告')
+            approval = validate_report(parts,day,trial=bool(trial_id))
+            cards = build_cards(parts,day,trial=bool(trial_id))
         with get_db() as conn:
             conn.execute('BEGIN IMMEDIATE')
-            for recipient in recipients:
-                # A retry must use the original payload even if collection results changed.
-                existing = conn.execute(f'''SELECT 1 FROM {table} WHERE {field}=?
-                    AND app_id=? AND recipient_type=? AND recipient_id=? LIMIT 1''',
-                    (delivery_key,client.app_id,recipient['type'],recipient['id'])).fetchone()
-                if existing:
-                    continue
+            for recipient in new_recipients:
                 for index,card in enumerate(cards):
                     content = json.dumps(card,ensure_ascii=False)
                     seed = json.dumps([delivery_key,client.app_id,recipient['type'],recipient['id'],index],ensure_ascii=False)
                     message_uuid = hashlib.sha256(seed.encode()).hexdigest()[:40]
                     conn.execute(f'''INSERT INTO {table}
-                        ({field},app_id,recipient_type,recipient_id,part,content,message_uuid,msg_type)
-                        VALUES (?,?,?,?,?,?,?,?)''',(delivery_key,client.app_id,recipient['type'],recipient['id'],index,content,message_uuid,'interactive'))
+                        ({field},app_id,recipient_type,recipient_id,part,content,message_uuid,msg_type,approval_json)
+                        VALUES (?,?,?,?,?,?,?,?,?)''',(delivery_key,client.app_id,recipient['type'],recipient['id'],index,content,message_uuid,'interactive',seal_payload(approval,content)))
         conn.close()
+        # Inspect every pending card before contacting even the first recipient.
+        checked = set()
+        for recipient in recipients:
+            for row in query(f'''SELECT * FROM {table} WHERE {field}=? AND app_id=?
+                AND recipient_type=? AND recipient_id=? AND sent_at IS NULL''',
+                (delivery_key,client.app_id,recipient['type'],recipient['id'])):
+                identity = (row['content'],row['approval_json'])
+                if identity not in checked:
+                    validate_saved_payload(row,day,trial=bool(trial_id))
+                    checked.add(identity)
         sent, skipped, failures = 0, 0, []
         for number,recipient in enumerate(recipients,1):
             rows = query(f'''SELECT * FROM {table} WHERE {field}=? AND app_id=?
