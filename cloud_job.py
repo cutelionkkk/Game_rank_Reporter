@@ -211,15 +211,17 @@ def run(bootstrap=False, collect_only=False, trial_us_free=False):
         print(f"私聊投递：{delivery['sent']} 条成功，{delivery['skipped']} 条已送达跳过，{len(delivery['failures'])} 项失败。")
         for error in delivery['failures']:
             print(error)
-        prune_history()
         return 1 if result['errors'] or delivery['failures'] else 0
     except ReportBlocked as exc:
         print(f'{exc}；本次未发送，采集历史保留供后续复查。')
         return 1
     finally:
         if Path(db.DB_PATH).exists():
-            pack_state('.cloud/state.bin', key)
-            print('已保存加密历史，包括已完成的投递。')
+            try:
+                prune_history()  # Blocked reports still collect; keep their history bounded too.
+            finally:
+                pack_state('.cloud/state.bin', key)
+                print('已保存加密历史，包括已完成的投递。')
 
 
 if __name__ == '__main__':
