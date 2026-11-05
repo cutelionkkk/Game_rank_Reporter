@@ -4,6 +4,11 @@ on:
   schedule:
     - cron: '0 9 * * *'
       timezone: Asia/Shanghai
+    # Recovery checks use the same daily delivery ledger and do not resend success.
+    - cron: '10,25 9 * * *'
+      timezone: Asia/Shanghai
+    - cron: '10 10 * * *'
+      timezone: Asia/Shanghai
   workflow_dispatch:
     inputs:
       initialize_history:

@@ -10,6 +10,8 @@ from pathlib import Path
 import sqlite3
 import tempfile
 import zipfile
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
 import requests
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
@@ -17,7 +19,8 @@ from cryptography.exceptions import InvalidTag
 
 import config
 import database as db
-from feishu_push import FeishuClient, recipients_from_config, send_daily_report, send_trial_report
+from feishu_push import FeishuClient, recipients_from_config, send_daily_report, send_trial_report, daily_delivery_state
+from report_guard import ReportBlocked, validate_report
 
 HEADER = b'GAME-RADAR-STATE-v1\0'
 ARTIFACT = 'game-radar-state'
@@ -158,13 +161,15 @@ def run(bootstrap=False, collect_only=False, trial_us_free=False):
     from monitoring import run_monitoring
     from report import generate_report_parts
     key = state_key()
+    day = datetime.now(ZoneInfo('Asia/Shanghai')).date().isoformat()
     try:
         settings = config.validate_monitor_settings(json.loads(os.environ.get('MONITOR_SETTINGS_JSON', '')))
     except (ValueError, TypeError):
         raise ValueError('MONITOR_SETTINGS_JSON 缺失或监测配置无效') from None
+    client = None
     if not collect_only:
         recipients_from_config()
-        FeishuClient()  # Validate credentials before any collection.
+        client = FeishuClient()  # Validate credentials before any collection.
     trial_id = None
     if trial_us_free:
         run_id = os.environ.get('GITHUB_RUN_ID', '')
@@ -174,9 +179,21 @@ def run(bootstrap=False, collect_only=False, trial_us_free=False):
         settings = trial_settings(settings)
     config.save_settings(settings)
     restore_latest(key, bootstrap)
+    state = None
+    if not collect_only and not trial_us_free:
+        state = daily_delivery_state(day=day,client=client)
+        if state['complete']:
+            print('今日所有接收人均已送达，本次复查结束，不重复采集或发送。')
+            return 0  # No writes: keep the existing encrypted artifact unchanged.
     # Only save after a successful restore/explicit first-run initialization.
     # A failed restore must never publish a blank replacement artifact.
     try:
+        if state and state['resumable']:
+            delivery = send_daily_report(None,day=day,client=client)
+            print(f"补发原始日报：{delivery['sent']} 条成功，{delivery['skipped']} 条已送达跳过，{len(delivery['failures'])} 项失败。")
+            for error in delivery['failures']:
+                print(error)
+            return 1 if delivery['failures'] else 0
         if trial_us_free and os.environ.get('MONITOR_HISTORY_BACKFILL_JSON'):
             from history_import import import_history
             count = import_history(os.environ['MONITOR_HISTORY_BACKFILL_JSON'])
@@ -185,15 +202,20 @@ def run(bootstrap=False, collect_only=False, trial_us_free=False):
             result = run_monitoring()
             parts = trial_report(result['crawl_time']) if trial_us_free else generate_report_parts(result['crawl_time'])
         print(f"采集完成：{result['ranking_entries']} 条排名，{result['company_catalogs']} 个公司目录，{len(result['errors'])} 项失败。")
+        validate_report(parts,day,trial=trial_us_free,crawl_time=result['crawl_time'])
+        print('发送检查通过：数据、历史比较、有效游戏内容及商店链接已核对。')
         if collect_only:
             print('仅采集，本次没有发送消息。')
             return 1 if result['errors'] else 0
-        delivery = send_trial_report(parts, trial_id) if trial_us_free else send_daily_report(parts)
+        delivery = send_trial_report(parts, trial_id,day=day,client=client) if trial_us_free else send_daily_report(parts,day=day,client=client)
         print(f"私聊投递：{delivery['sent']} 条成功，{delivery['skipped']} 条已送达跳过，{len(delivery['failures'])} 项失败。")
         for error in delivery['failures']:
             print(error)
         prune_history()
         return 1 if result['errors'] or delivery['failures'] else 0
+    except ReportBlocked as exc:
+        print(f'{exc}；本次未发送，采集历史保留供后续复查。')
+        return 1
     finally:
         if Path(db.DB_PATH).exists():
             pack_state('.cloud/state.bin', key)

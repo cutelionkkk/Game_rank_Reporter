@@ -26,6 +26,13 @@ RECIPIENTS = [{'type': 'email', 'id': 'a@example.com'}, {'type': 'email', 'id': 
 
 
 class DeliveryCase(BaseCase):
+    def setUp(self):
+        super().setUp()
+        # Transport tests isolate the content gate; test_report_guard covers it end to end.
+        for target, value in [('feishu_push.validate_report', {}), ('feishu_push.validate_saved_payload', None)]:
+            guard = patch(target, return_value=value)
+            guard.start(); self.addCleanup(guard.stop)
+
     def test_partial_failure_resumes_original_payload_only_for_failed_recipient(self):
         client = Mock(app_id='cli_test')
         client.send.side_effect = ['om_first', RuntimeError('temporary')]
@@ -176,6 +183,7 @@ class CloudStateCase(BaseCase):
         with patch.dict(os.environ, env), patch('cloud_job.restore_latest') as restore, \
              patch('monitoring.run_monitoring', return_value=result), \
              patch('report.generate_report_parts', return_value=['report']), \
+             patch('cloud_job.validate_report'), \
              patch('cloud_job.send_daily_report', return_value=dict(sent=1, skipped=0, failures=['failed'])), \
              patch('cloud_job.pack_state') as pack:
             self.assertEqual(cloud.run(), 1)
